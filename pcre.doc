@@ -1,0 +1,67 @@
+\documentclass[11pt]{article}
+\usepackage{times}
+\usepackage{pl}
+\usepackage{html}
+\sloppy
+\makeindex
+
+\onefile
+\htmloutput{.}					% Output directory
+\htmlmainfile{pcre}				% Main document file
+\bodycolor{white}				% Page colour
+
+\begin{document}
+
+\title{SWI-Prolog Regular Expression library}
+\author{Jan Wielemaker \\
+	VU University Amsterdam \\
+	The Netherlands \\
+	E-mail: \email{J.Wielemaker@vu.nl}}
+
+\maketitle
+
+\begin{abstract}
+The library \pllib{pcre} provides access to Perl Compatible Regular
+Expressions.
+\end{abstract}
+
+\pagebreak
+\tableofcontents
+
+\vfill
+\vfill
+
+\newpage
+
+\section{Motivation}
+\label{sec:pcre-motivation}
+
+The core facility for string matching in Prolog is provided by DCG
+(\jargon{Definite Clause Grammars}). Using DCGs is typically more
+verbose but gives reuse, modularity, readability and mixing with
+arbitrary Prolog code in return. Supporting regular expressions has some
+advantages: (1) in simple cases the terse specification of a regular
+expression is more comfortable, (2) many programmers are familar with
+them and (3) regular expressions are part of domain specific languages
+one may wish to implement in Prolog, e.g., SPARQL.
+
+There are roughly three options for adding regular expressions to
+Prolog. One is to simply interpret them in Prolog. Given Prolog's
+unification and backtracking facilities this is remarkable simple and
+performs quite reasonable. Still, the implementing all facilities of
+modern regular expression engines requires significant effort.
+Alternatively, we can \jargon{compile} them into DCGs. This brings terse
+expressions to DCGs while staying in the same framework. The
+disadvantage is that regular expressions become programs that are hard
+to reclaim, making this approach less attractive for applications that
+potentially execute many different regular expressions. The final option
+is to wrap an existing regular expression engine. This provides access
+to a robust implementation for which we only have to document the Prolog
+binding. That is the option taken by library \pllib{pcre}.
+
+\input{pcre4pl.tex}
+
+\printindex
+
+\end{document}
+
