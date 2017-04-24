@@ -481,7 +481,9 @@ static re_config_opt cfg_opts[] =
   { "bsr",		      PCRE_CONFIG_BSR,			  CFG_INTEGER },
   { "link_size",	      PCRE_CONFIG_LINK_SIZE,		  CFG_INTEGER },
   { "posix_malloc_threshold", PCRE_CONFIG_POSIX_MALLOC_THRESHOLD, CFG_INTEGER },
+#ifdef PCRE_CONFIG_PARENS_LIMIT
   { "parens_limit",	      PCRE_CONFIG_PARENS_LIMIT,		  CFG_INTEGER },
+#endif
   { "match_limit",	      PCRE_CONFIG_MATCH_LIMIT,		  CFG_INTEGER },
   { "match_limit_recursion",  PCRE_CONFIG_MATCH_LIMIT_RECURSION,  CFG_INTEGER },
   { "stackrecurse",	      PCRE_CONFIG_STACKRECURSE,		  CFG_BOOL },
@@ -704,17 +706,8 @@ re_compile(term_t pat, term_t reb, term_t options)
 
     if ( (PL_get_atom(pat, &re->pattern)) )
     { PL_register_atom(re->pattern);
-    } else if ( (re_options&PCRE_NEVER_UTF) )
-    { re->pattern = PL_new_atom(pats);
     } else
-    { term_t t = PL_new_term_ref();
-      if ( PL_unify_term(t, PL_UTF8_CHARS, pats) &&
-	   PL_get_atom(t, &re->pattern))
-      { PL_register_atom(re->pattern);
-      } else
-      { re_free(re);
-	return FALSE;
-      }
+    { re->pattern = PL_new_atom_mbchars(REP_UTF8, len, pats);
     }
 
     return PL_unify_blob(reb, &re, sizeof(re), &pcre_blob);
