@@ -563,13 +563,19 @@ re_flags_options(Flags, Options) :-
     atom_chars(Flags, Chars),
     maplist(re_flag_option, Chars, Options).
 
-re_flag_option(i, caseless(true)).
-re_flag_option(m, multiline(true)).
-re_flag_option(x, extended(true)).
-re_flag_option(s, dotall(true)).
-re_flag_option(a, capture_type(atom)).
-re_flag_option(r, capture_type(range)).
-re_flag_option(t, capture_type(term)).
+re_flag_option(Flag, Option) :-
+    re_flag_option_(Flag, Option),
+    !.
+re_flag_option(Flag, _) :-
+    existence_error(re_flag, Flag).
+
+re_flag_option_(i, caseless(true)).
+re_flag_option_(m, multiline(true)).
+re_flag_option_(x, extended(true)).
+re_flag_option_(s, dotall(true)).
+re_flag_option_(a, capture_type(atom)).
+re_flag_option_(r, capture_type(range)).
+re_flag_option_(t, capture_type(term)).
 
 %!  re_flush
 %
