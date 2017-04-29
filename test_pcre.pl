@@ -68,10 +68,10 @@ test(typed, Sub == re_match{0:"2017-04-20",
                             date:"2017-04-20",
                             day:20,month:4,year:2017}) :-
     re_matchsub("(?<date> (?<year_I>(?:\\d\\d)?\\d\\d) -
-                 (?<month_I>\\d\\d) - (?<day_I>\\d\\d) )"/e,
+                 (?<month_I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
                 "2017-04-20", Sub, []).
 test(range, Sub == re_match{0:"Name: value", value:6-5}) :-
-    re_matchsub(".*:\\s(?<value_R>.*)"/e, "Name: value", Sub, []).
+    re_matchsub(".*:\\s(?<value_R>.*)"/x, "Name: value", Sub, []).
 test(split, Split == ["","a","b","aa","c"]) :-
     re_split("a+", "abaac", Split, []).
 test(replace, NewString == "Abaac") :-

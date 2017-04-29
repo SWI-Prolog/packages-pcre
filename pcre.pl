@@ -565,9 +565,9 @@ re_flags_options(Flags, Options) :-
 
 re_flag_option(i, caseless(true)).
 re_flag_option(m, multiline(true)).
-re_flag_option(e, extended(true)).
+re_flag_option(x, extended(true)).
+re_flag_option(s, dotall(true)).
 re_flag_option(a, capture_type(atom)).
-re_flag_option(s, capture_type(string)).
 re_flag_option(r, capture_type(range)).
 re_flag_option(t, capture_type(term)).
 
