@@ -137,11 +137,11 @@ cache. The cache can be cleared using re_flush/0.
 %   Pattern/Flags, where Pattern is an atom or string. The defined flags
 %   and there related option for re_compile/3 are below.
 %
-%     - *e*: extended(true)
+%     - *x*: extended(true)
 %     - *i*: caseless(true)
 %     - *m*: multiline(true)
+%     - *s*: dotall(true)
 %     - *a*: capture_type(atom)
-%     - *s*: capture_type(string)
 %     - *r*: capture_type(range)
 %     - *t*: capture_type(term)
 
