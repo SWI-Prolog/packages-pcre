@@ -14,4 +14,8 @@ swipl_plugin(
 
 test_libs(pcre)
 
+pkg_doc(pcre
+	SECTION
+	SOURCE pcre.pl pcre4pl.tex)
+
 endif(PCRE_FOUND)
