@@ -11,6 +11,9 @@ swipl_plugin(
     C_SOURCES pcre4pl.c
     C_LIBS ${PCRE_LIBRARIES}
     PL_LIBS pcre.pl)
+target_include_directories(
+    plugin_pcre4pl BEFORE PRIVATE
+    ${PCRE_INCLUDE_DIR})
 
 test_libs(pcre)
 
