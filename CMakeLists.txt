@@ -15,6 +15,8 @@ target_include_directories(
     plugin_pcre4pl BEFORE PRIVATE
     ${PCRE_INCLUDE_DIR})
 
+install_dll(${PCRE_LIBRARIES})
+
 test_libs(pcre)
 
 pkg_doc(pcre
