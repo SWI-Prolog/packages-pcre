@@ -41,7 +41,7 @@
 :- asserta(user:file_search_path(library, '../plunit')).
 
 :- use_module(library(plunit)).
-:- use_module(pcre).
+:- use_module(library(pcre)).
 
 test_pcre :-
     run_tests([ pcre
