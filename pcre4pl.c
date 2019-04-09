@@ -325,7 +325,7 @@ typedef struct re_optdef
 #define RE_NEG  0x004
 
 static re_optdef re_optdefs[] =
-{ { "anchored",	       PCRE_ANCHORED,	      RE_COMP },
+{ { "anchored",	       PCRE_ANCHORED,	      RE_COMP|RE_EXEC },
   { "caseless",	       PCRE_CASELESS,	      RE_COMP },
   { "dollar_endonly",  PCRE_DOLLAR_ENDONLY,   RE_COMP },
   { "dotall",	       PCRE_DOTALL,	      RE_COMP },
