@@ -45,9 +45,10 @@
             re_flush/0,
             re_config/1           % ?Config
           ]).
-:- use_module(library(error)).
-:- use_module(library(apply)).
-:- use_module(library(dcg/basics)).
+:- autoload(library(apply),[maplist/3]).
+:- autoload(library(error),[must_be/2,existence_error/2]).
+:- autoload(library(dcg/basics),[string/3,eos/2,digit/3,digits/3]).
+
 :- use_foreign_library(foreign(pcre4pl)).
 
 :- meta_predicate
