@@ -173,6 +173,11 @@ re_match(Regex, String, Options) :-
 %                    day:20, month:4, year:2017}.
 %
 %     ```
+%
+%   @arg Options Only _execution_ options are processed.  See re_match/3
+%   for the set of options.  _Compilation_ options must be passed as
+%   `/flags` to Regex.
+%   @arg Regex  See re_match/2 for a description of this argument.
 
 re_matchsub(Regex, String, Subs, Options) :-
     re_compiled(Regex, Compiled),
