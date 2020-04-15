@@ -852,10 +852,10 @@ re_error(int ec)
 
 static int *
 alloc_ovector(re_data *re, int *ovector, int *ovecsize)
-{ if ( re->capture_size >= (*ovecsize)*3 )
-  { int sz = (re->capture_size+1)*3;
+{ int sz = (re->capture_size+1)*3;
 
-    if ( !(ovector = malloc(sz*sizeof(int))) )
+  if ( sz > *ovecsize )
+  { if ( !(ovector = malloc(sz*sizeof(int))) )
     { PL_resource_error("memory");
       ovector = NULL;
     }
