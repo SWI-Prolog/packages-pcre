@@ -181,6 +181,7 @@ typedef struct re_subject
   size_t      length;			/* Total length in bytes */
   size_t      charp;			/* Character position */
   size_t      bytep;			/* Byte position */
+  int	      flags;			/* Allocation flags */
 } re_subject;
 
 
@@ -241,8 +242,16 @@ static int
 re_get_subject(term_t t, re_subject *subj, int flags)
 { memset(subj, 0, sizeof(*subj));
 
+  subj->flags = flags;
   return PL_get_nchars(t, &subj->length, &subj->subject, flags|SUBJ_FLAGS);
 }
+
+static void
+re_free_subject(re_subject *subj)
+{ if ( (subj->flags & BUF_MALLOC) && subj->subject )
+    PL_free(subj->subject);
+}
+
 
 
 		 /*******************************
@@ -876,25 +885,27 @@ re_matchsub(term_t regex, term_t on, term_t result, term_t options)
   int flags = 0;
 
   if ( result )
-    flags |= BUF_RING;			/* Results may shift stack */
+    flags |= BUF_MALLOC;		/* Results may shift stack */
 
   if ( !re_get_options(options, RE_EXEC, &re_options, re_match_opt, &opts) )
     return FALSE;
 
   if ( get_re(regex, &re) &&
        re_get_subject(on, &subject, flags) )
-  { int rc;
+  { int rc = FALSE;
     int ovecbuf[30];
     int ovecsize = 30;
     int *ovector = alloc_ovector(re, ovecbuf, &ovecsize);
 
     if ( ovector == NULL )
-      return FALSE;
+      goto out;
 
     if ( opts.start )
     { if ( (opts.start=utf8_seek(subject.subject, subject.length,
 				 opts.start)) == (size_t)-1 )
-	return out_of_range(opts.start);
+      { out_of_range(opts.start);
+	goto out;
+      }
     }
 
     rc = pcre_exec(re->pcre, re->extra,
@@ -911,8 +922,11 @@ re_matchsub(term_t regex, term_t on, term_t result, term_t options)
     { rc = re_error(rc);
     }
 
-    if ( ovector != ovecbuf )
+  out:
+    if ( ovector && ovector != ovecbuf )
       free(ovector);
+
+    re_free_subject(&subject);
 
     return rc;
   }
@@ -940,8 +954,8 @@ re_foldl(term_t regex, term_t on,
     return FALSE;
 
   if ( get_re(regex, &re) &&
-       re_get_subject(on, &subject, BUF_RING) )
-  { int rc;
+       re_get_subject(on, &subject, BUF_MALLOC) )
+  { int rc = FALSE;
     int ovecbuf[30];
     int ovecsize = 30;
     int *ovector = alloc_ovector(re, ovecbuf, &ovecsize);
@@ -950,7 +964,7 @@ re_foldl(term_t regex, term_t on,
     term_t av = PL_new_term_refs(4);
 
     if ( ovector == NULL )
-      return FALSE;
+      goto out;
 
     if ( !pred )
       pred = PL_predicate("re_call_folder", 4, "pcre");
@@ -988,6 +1002,7 @@ re_foldl(term_t regex, term_t on,
   out:
     if ( ovector != ovecbuf )
       free(ovector);
+    re_free_subject(&subject);
 
     return rc;
   }
