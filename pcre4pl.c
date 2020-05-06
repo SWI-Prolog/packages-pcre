@@ -248,8 +248,7 @@ re_get_subject(term_t t, re_subject *subj, int flags)
 
 static void
 re_free_subject(re_subject *subj)
-{ if ( (subj->flags & BUF_MALLOC) && subj->subject )
-    PL_free(subj->subject);
+{
 }
 
 
@@ -821,12 +820,16 @@ unify_match(term_t t, re_data *re, re_subject *subject,
 
   PL_put_nil(list);
   for(i=ovsize-1; i>=0; i--)
-  { if ( !(put_capname(capn, re, i) &&
-	   put_capval(caps, re, subject, i, ovector) &&
-	   PL_cons_functor(pair, FUNCTOR_pair2, capn, caps) &&
-	   PL_cons_list(list, pair, list)) )
-    { return FALSE;
-    }
+  { int rc;
+
+    PL_STRINGS_MARK();
+    rc = (put_capname(capn, re, i) &&
+	  put_capval(caps, re, subject, i, ovector) &&
+	  PL_cons_functor(pair, FUNCTOR_pair2, capn, caps) &&
+	  PL_cons_list(list, pair, list));
+    PL_STRINGS_RELEASE();
+    if ( !rc )
+      return FALSE;
   }
 
   rc = PL_unify(t, list);
@@ -883,9 +886,6 @@ re_matchsub(term_t regex, term_t on, term_t result, term_t options)
   matchopts opts = {0};
   int re_options;
   int flags = 0;
-
-  if ( result )
-    flags |= BUF_MALLOC;		/* Results may shift stack */
 
   if ( !re_get_options(options, RE_EXEC, &re_options, re_match_opt, &opts) )
     return FALSE;
@@ -954,7 +954,7 @@ re_foldl(term_t regex, term_t on,
     return FALSE;
 
   if ( get_re(regex, &re) &&
-       re_get_subject(on, &subject, BUF_MALLOC) )
+       re_get_subject(on, &subject, BUF_STACK) )
   { int rc = FALSE;
     int ovecbuf[30];
     int ovecsize = 30;
