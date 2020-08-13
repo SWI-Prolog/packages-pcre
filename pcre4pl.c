@@ -969,9 +969,9 @@ re_foldl(term_t regex, term_t on,
     if ( !pred )
       pred = PL_predicate("re_call_folder", 4, "pcre");
 
-    PL_put_term(av+0, closure);
+    if ( !PL_put_term(av+0, closure) ) return FALSE;
 	     /* av+1 is match */
-    PL_put_term(av+2, v0);
+    if ( !PL_put_term(av+2, v0) ) return FALSE;
 	     /* av+3 = v1 */
 
     for(;;)
@@ -983,12 +983,12 @@ re_foldl(term_t regex, term_t on,
       if ( rc > 0 )
       { PL_put_variable(av+1);
 	if ( !unify_match(av+1, re, &subject, &opts, rc, ovector) ||
-	     !PL_call_predicate(NULL, PL_Q_PASS_EXCEPTION, pred, av) )
+	     !PL_call_predicate(NULL, PL_Q_PASS_EXCEPTION, pred, av) ||
+	     !PL_put_term(av+2, av+3) ||
+	     !PL_put_variable(av+3) )
 	{ rc = FALSE;
 	  goto out;
 	}
-	PL_put_term(av+2, av+3);
-	PL_put_variable(av+3);
 	if ( ovector[1] == offset )
 	  offset++;
 	else
