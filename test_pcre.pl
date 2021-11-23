@@ -36,12 +36,14 @@
           [ test_pcre/0
           ]).
 
+:- encoding(utf8).
+
 :- asserta(user:file_search_path(foreign, '.')).
 :- asserta(user:file_search_path(library, '.')).
-:- asserta(user:file_search_path(library, '../plunit')).
 
 :- use_module(library(plunit)).
 :- use_module(library(pcre)).
+:- use_module(library(error)).
 
 test_pcre :-
     run_tests([ pcre
@@ -52,11 +54,27 @@ test_pcre :-
 test(match1, Sub == re_match{0:"aap"}) :-
     re_compile("a+p", Re, []),
     re_matchsub(Re, "aapenootjes", Sub, []).
+test(match1a, Sub == re_match{1:"aap", 2:"aaaaaaap", 0:"aapenootjes  aaaaaaap"}) :-
+    re_matchsub("(a+?p).*?(a+?p)", "meer aapenootjes  aaaaaaapenootjes", Sub, []).
+test(match1b, fail) :-
+    re_compile("a+p", Re, [anchored(true)]),
+    re_matchsub(Re, "---aapenootjes", _Sub, []).
+test(match1c, Sub == re_match{0:"AAP"}) :-
+    re_compile("a+p", Re, [anchored(false), caseless(true)]),
+    re_matchsub(Re, "---AAPenootjes", Sub, []).
+
+test(compile_option1) :-
+    re_compile("a+b", _Re, [compat(javascript)]).
+test(compile_option2, error(domain_error(compat_option, qqsv), _)) :-
+    re_compile("a+b", _Re, [compat(qqsv)]).
+
 test(start, Sub == re_match{0:"es"}) :-
     re_compile("e.", Re, []),
     re_matchsub(Re, "aapenootjes", Sub, [start(4)]).
 test(fold, Words == ["aap", "noot", "mies"]) :-
     re_foldl(add_match, "[a-z]+", "aap noot mies", Words, [], []).
+test(fold2, Words == [re_match{0:"aap"},re_match{0:"noot"},re_match{0:"mies"}]) :-
+    re_foldl(add_match2, "[a-z]+", "  aap    noot mies ", Words, [], []).
 test(named, Sub == re_match{0:"2017-04-20",
                             date:"2017-04-20",
                             day:"20",month:"04",year:"2017"}) :-
@@ -69,6 +87,13 @@ test(typed, Sub == re_match{0:"2017-04-20",
                             day:20,month:4,year:2017}) :-
     re_matchsub("(?<date> (?<year_I>(?:\\d\\d)?\\d\\d) -
                  (?<month_I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
+                "2017-04-20", Sub, []).
+test(typed2, Sub == re_match{0:"2017-04-20",
+                            date:"2017-04-20",
+                            day:20,month_:4,year_x:2017}) :-
+    % Names with more than one "_", for testing type suffix
+    re_matchsub("(?<date> (?<year_x_I>(?:\\d\\d)?\\d\\d) -
+                 (?<month__I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
                 "2017-04-20", Sub, []).
 test(range, Sub == re_match{0:"Name: value", value:6-5}) :-
     re_matchsub(".*:\\s(?<value_R>.*)"/x, "Name: value", Sub, []).
@@ -85,6 +110,89 @@ test(replace_all, NewString == "A1bA2A3c") :-
 test(replace_none, NewString == "a1ba2a3c") :-
     re_replace("x(\\d)"/g, "A\\1", "a1ba2a3c", NewString).
 
+test(replace_unicode1,
+     [condition(re_config(utf8(true))),
+      true(NewString == "網目錦蛇 [reticulated python へび]")]) :-
+    re_replace('àmímé níshíkíhéꜜbì', "reticulated python へび",
+               '網目錦蛇 [àmímé níshíkíhéꜜbì]', NewString).
+test(replace_unicode2,
+     [condition(re_config(utf8(true))),
+      true(NewString == "網目錦へび [àmímé níshíkíhéꜜbì]")]) :-
+    re_replace('(a蛇é)+', "へび",
+               '網目錦a蛇éa蛇éa蛇éa蛇é [àmímé níshíkíhéꜜbì]', NewString).
+test(replace_unicode3,
+     [condition(re_config(utf8(true))),
+      true(NewString == "網目へび [àmímé níshíkíhéꜜbì]")]) :-
+    re_replace("[蛇錦]+", "へび",
+               "網目錦蛇 [àmímé níshíkíhéꜜbì]", NewString).
+
+test(config_not_compound1, error(type_error(compound,version(A,B)),_)) :-
+    re_config(version(A,B)).
+test(config_not_compound2, error(type_error(compound,foo(A,B)),_)) :-
+    re_config(foo(A,B)).
+test(config_not_compound3, error(type_error(compound,bsr),_)) :-
+    re_config(bsr).
+test(config_not_compound4, error(type_error(compound,123),_)) :-
+    re_config(123).
+test(config_not_compound5, error(instantiation_error,_)) :-
+    re_config(_).
+test(config_invalid, error(existence_error(re_config,qqsv(V)),_)) :-
+    re_config(qqsv(V)).
+test(config_version) :-
+    re_config(version(V)),
+    must_be(atom, V), % TODO: V is of the form '8.39 2016-06-14'.
+    re_config(version(V)). % Check that it takes an argument
+test(config_version_type, fail) :-
+    re_config(version(V)),
+    atom_string(V, Vstr),
+    re_config(version(Vstr)).
+test(config_version_value, [setup((re_config(version(V)),
+                                   atomic_concat(V, ' ', V2))),
+                            fail]) :-
+    re_config(version(V2)).
+test(config_utf8) :-
+    re_config(utf8(V)),
+    must_be(boolean, V).
+test(config_utf8_value, [nondet]) :- % For verifying that this works: condition(re_config(utf8(true)))
+    (   re_config(utf8(true)) % TODO: shouldn't leave choicepoint
+    ;   re_config(utf8(false))
+    ).
+test(config_unicode_properties) :-
+    re_config(unicode_properties(V)),
+    must_be(boolean, V).
+test(config_jit) :-
+    re_config(jit(V)),
+    must_be(boolean, V).
+test(config_jittarget) :-
+    re_config(jittarget(V)),
+    must_be(atom, V).
+test(config_newline) :-
+    re_config(newline(V)),
+    must_be(integer, V).
+test(config_bsr) :-
+    re_config(bsr(V)),
+    must_be(integer, V).
+test(config_link_size) :-
+    re_config(link_size(V)),
+    must_be(integer, V).
+test(config_posix_malloc_threshold) :-
+    re_config(posix_malloc_threshold(V)),
+    must_be(integer, V).
+test(config_parens_limit) :-
+    re_config(parens_limit(V)),
+    must_be(integer, V).
+test(config_match_limit) :-
+    re_config(match_limit(V)),
+    must_be(integer, V).
+test(config_match_limit_recursion) :-
+    re_config(match_limit_recursion(V)),
+    must_be(integer, V).
+test(config_stackrecurse) :-
+    re_config(stackrecurse(V)),
+    must_be(boolean, V).
+
 :- end_tests(pcre).
 
 add_match(Dict, [Dict.0|List], List).
+
+add_match2(Dict, [Dict|List], List).

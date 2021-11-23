@@ -109,7 +109,8 @@ cache. The cache can be cleared using re_flush/0.
 %     true.
 %     ```
 %
-%   Options:
+%   Options (behavior is unspecified if an option is repeated; unrecognized
+%            options are ignored):
 %
 %     * anchored(Bool)
 %     If =true=, match only at the first position
@@ -136,7 +137,7 @@ cache. The cache can be cleared using re_flush/0.
 %
 %   @arg Regex is the output  of  re_compile/3,   a  pattern  or  a term
 %   Pattern/Flags, where Pattern is an atom or string. The defined flags
-%   and there related option for re_compile/3 are below.
+%   and their related option for re_compile/3 are below.
 %
 %     - *x*: extended(true)
 %     - *i*: caseless(true)
@@ -473,7 +474,9 @@ alnum(L) -->
 %
 %   Compiles Pattern to a Regex _blob_ of type =regex= (see blob/2).
 %   Defined Options are  defined  below.   Please  consult  the PCRE
-%   documentation for details.
+%   documentation for details.  Behavior is unspecified if an option
+%   is repeated with a different value;     unrecognized options are
+%   ignored.
 %
 %     * anchored(Bool)
 %     Force pattern anchoring
@@ -511,7 +514,7 @@ alnum(L) -->
 %   In addition to the options above that directly map to pcre flags the
 %   following options are processed:
 %
-%     * optimize(Bool)
+%     * optimise(Bool) or optimize(Bool)
 %     If `true`, _study_ the regular expression.
 %     * capture_type(+Type)
 %     How to return the matched part of the input and possibly captured
@@ -597,11 +600,18 @@ re_flush :-
 %
 %   Extract configuration information from the pcre  library. Term is of
 %   the form Name(Value). Name  is   derived  from the =|PCRE_CONFIG_*|=
-%   constant after removing =PCRE_CONFIG_= and mapping the name to lower
+%   constant after removing =|PCRE_CONFIG_|= and mapping the name to lower
 %   case, e.g. `utf8`, `unicode_properties`,  etc.   Value  is  either a
 %   Prolog boolean, integer or atom.
 %
 %   Finally, the functionality of pcre_version()  is available using the
 %   configuration name `version`.
+%
+%   =Term= must be instantiated; re_config/1 doesn't backtrack through
+%   all the possible configuration values.
+%
+%   @error `existence_error` if =Term= isn't defined as a =|PCRE_CONFIG_*|= constant.
+%   @error `type_error` if =Term= isn't a 1-arity compound term.
+%   @error `instantiation_error` if =Term= is a variable.
 %
 %   @see `man pcreapi` for details

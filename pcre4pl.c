@@ -62,7 +62,7 @@ typedef struct cap_how
 
 typedef struct re_data
 { atom_t	symbol;			/* regex as blob */
-  atom_t        pattern;		/* pattern (as atom) */
+  atom_t	pattern;		/* pattern (as atom) */
   int		re_options;		/* compilation options */
   int		capture_size;		/* # captured subpatterns */
   cap_how      *capture_names;		/* Names for captured data */
@@ -98,6 +98,7 @@ re_free(re_data *re)
 static functor_t FUNCTOR_pair2;		/* -/2 */
 
 static atom_t ATOM_optimise;		/* Optimise */
+static atom_t ATOM_optimize;
 static atom_t ATOM_bsr;
 static atom_t ATOM_anycrlf;
 static atom_t ATOM_unicode;
@@ -145,7 +146,7 @@ compare_pcres(atom_t a, atom_t b)
 { re_data *rea = *(re_data**)PL_blob_data(a, NULL, NULL);
   re_data *reb = *(re_data**)PL_blob_data(b, NULL, NULL);
 
-  return ( rea > reb ?  1 :
+  return ( rea > reb ?	1 :
 	   reb < rea ? -1 : 0
 	 );
 }
@@ -238,9 +239,9 @@ bytep_to_charp(re_subject *subj, size_t bytep)
 
 #define SUBJ_FLAGS (CVT_ATOM|CVT_STRING|CVT_LIST|REP_UTF8|CVT_EXCEPTION)
 
-static int
+static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
 re_get_subject(term_t t, re_subject *subj, int flags)
-{ memset(subj, 0, sizeof(*subj));
+{ memset(subj, 0, sizeof *subj); /* { NULL, 0, 0, 0, 0 }; */
 
   subj->flags = flags;
   return PL_get_nchars(t, &subj->length, &subj->subject, flags|SUBJ_FLAGS);
@@ -257,7 +258,7 @@ re_free_subject(re_subject *subj)
 		 *	   PROLOG EXCHANGE	*
 		 *******************************/
 
-static int
+static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
 get_re(term_t t, re_data **re)
 { void *p;
   size_t len;
@@ -269,14 +270,14 @@ get_re(term_t t, re_data **re)
     return TRUE;
   }
 
-  PL_type_error("regex", t);
-  return FALSE;
+  *re = NULL;
+  return PL_type_error("regex", t);
 }
 
 
 #define RE_STUDY	0x0001
 
-static int
+static int /* FALSE/TRUE or -1 for error */
 effective_bool(term_t arg)
 { if ( arg )
   { int v;
@@ -290,26 +291,26 @@ effective_bool(term_t arg)
 }
 
 
-static int
+static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
 set_flag(term_t arg, int *flags, int value)
 { switch( effective_bool(arg) )
   { case TRUE:
       *flags |= value;
+      return TRUE;
     case FALSE:
       return TRUE;
-    default:
+    default: /* -1 */
       return FALSE;
   }
 }
 
 
-static int
+static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
 not_flag(term_t head, term_t arg, int *flags, int value)
 { int v;
 
   if ( !arg )
-  { PL_type_error("option", head);
-    return FALSE;
+  { return PL_type_error("option", head);
   } else if ( PL_get_bool_ex(arg, &v) )
   { if ( !v )
       *flags |= value;
@@ -329,7 +330,7 @@ typedef struct re_optdef
 
 #define RE_COMP 0x001
 #define RE_EXEC 0x002
-#define RE_NEG  0x004
+#define RE_NEG	0x004
 
 static re_optdef re_optdefs[] =
 { { "anchored",	       PCRE_ANCHORED,	      RE_COMP|RE_EXEC },
@@ -348,11 +349,11 @@ static re_optdef re_optdefs[] =
   { "eol",	       PCRE_NOTEOL,	      RE_EXEC|RE_NEG },
   { "empty",	       PCRE_NOTEMPTY,	      RE_EXEC|RE_NEG },
   { "empty_atstart",   PCRE_NOTEMPTY_ATSTART, RE_EXEC|RE_NEG },
-  { NULL,	       0}
+  { NULL, 0}
 };
 
 
-static int
+static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
 re_get_options(term_t options, int mode, int *optp,
 	       int (*func)(atom_t o, term_t a, void *ctx),
 	       void *ctx)
@@ -386,8 +387,7 @@ re_get_options(term_t options, int mode, int *optp,
 	else if ( aval == ATOM_unicode )
 	  opt |= PCRE_BSR_UNICODE;
 	else
-	{ PL_domain_error("bsr_option", arg);
-	  return FALSE;
+	{ return PL_domain_error("bsr_option", arg);
 	}
       } else if ( name == ATOM_newline && arg )
       { atom_t aval;
@@ -408,8 +408,7 @@ re_get_options(term_t options, int mode, int *optp,
 	else if ( aval == ATOM_cr )
 	  opt |= PCRE_NEWLINE_CR;
 	else
-	{ PL_domain_error("newline_option", arg);
-	  return FALSE;
+	{ return PL_domain_error("newline_option", arg);
 	}
       } else if ( name == ATOM_compat && arg && mode == RE_COMP )
       { atom_t aval;
@@ -420,8 +419,7 @@ re_get_options(term_t options, int mode, int *optp,
 	if ( aval == ATOM_javascript )
 	  opt |= PCRE_JAVASCRIPT_COMPAT;
 	else
-	{ PL_domain_error("compat_option", arg);
-	  return FALSE;
+	{ return PL_domain_error("compat_option", arg);
 	}
       } else
       { re_optdef *def;
@@ -448,8 +446,7 @@ re_get_options(term_t options, int mode, int *optp,
 	}
       }
     } else
-    { PL_type_error("option", head);
-      return FALSE;
+    { return PL_type_error("option", head);
     }
   }
 
@@ -494,60 +491,66 @@ static re_config_opt cfg_opts[] =
   { "match_limit",	      PCRE_CONFIG_MATCH_LIMIT,		  CFG_INTEGER },
   { "match_limit_recursion",  PCRE_CONFIG_MATCH_LIMIT_RECURSION,  CFG_INTEGER },
   { "stackrecurse",	      PCRE_CONFIG_STACKRECURSE,		  CFG_BOOL },
-
-  { NULL }
+  { NULL, 0}
 };
 
 
+/** re_config(+Term)
+
+    For documentation of this function, see pcre.pl
+*/
 static foreign_t
 re_config(term_t opt)
 { atom_t name;
   size_t arity;
 
-  if ( PL_get_name_arity(opt, &name, &arity) && arity == 1 )
-  { re_config_opt *o;
-    term_t arg = PL_new_term_ref();
+  if ( PL_get_name_arity(opt, &name, &arity) )
+  { if ( arity == 1 )
+    { re_config_opt *o;
+      term_t arg = PL_new_term_ref();
 
-    _PL_get_arg(1, opt, arg);
+      _PL_get_arg(1, opt, arg);
 
-    for(o=cfg_opts; o->name; o++)
-    { if ( !o->atom )
-	o->atom = PL_new_atom(o->name);
+      for(o=cfg_opts; o->name; o++)
+      { if ( !o->atom )
+	  o->atom = PL_new_atom(o->name);
 
-      if ( o->atom == name )
-      { union
-	{ int i;
-	  char *s;
-	} val;
+	if ( o->atom == name )
+	{ union
+	  { int i;
+	    char *s;
+	  } val;
 
-	if ( pcre_config(o->id, &val) == 0 )
-	{ switch(o->type)
-	  { case CFG_BOOL:
-	      return PL_unify_bool(arg, val.i);
-	    case CFG_INTEGER:
-	      return PL_unify_integer(arg, val.i);
-	    case CFG_STRING:
-	      return PL_unify_atom_chars(arg, val.s);
-	    default:
-	      assert(0);
+	  if ( pcre_config(o->id, &val) == 0 )
+	  { switch(o->type)
+	    { case CFG_BOOL:
+		return PL_unify_bool(arg, val.i);
+	      case CFG_INTEGER:
+		return PL_unify_integer(arg, val.i);
+	      case CFG_STRING:
+		return PL_unify_atom_chars(arg, val.s);
+	      default:
+		assert(0);
+	    }
+	  } else
+	  { break;
 	  }
-	} else
-	{ break;
 	}
       }
+
+      if ( name == ATOM_version )
+	return PL_unify_atom_chars(arg, pcre_version());
+
+      return PL_existence_error("re_config", opt);
     }
-
-    if ( name == ATOM_version )
-      return PL_unify_atom_chars(arg, pcre_version());
-
-    return PL_existence_error("re_config", opt);
+    return PL_type_error("compound", opt);
   }
 
-  return TRUE;
+  return PL_type_error("compound", opt);
 }
 
 
-static int
+static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
 init_capture_map(re_data *re)
 { int count;
 
@@ -567,8 +570,7 @@ init_capture_map(re_data *re)
 	if ( (re->capture_names = malloc(cmsize)) )
 	{ memset(re->capture_names, 0, cmsize);
 	} else
-	{ PL_resource_error("memory");
-	  return FALSE;
+	  { return PL_resource_error("memory");
 	}
 
 	for(i=0; i<count; i++, table += es)
@@ -580,7 +582,7 @@ init_capture_map(re_data *re)
 
 	  assert(ci < re->capture_size+1);
 
-	  if ( (fs=strchr(s, '_')) )
+	  if ( (fs=strrchr(s, '_')) )
 	  { if ( fs[1] && !fs[2] )
 	    { len = fs-s;
 
@@ -622,11 +624,11 @@ typedef struct re_compile_options
 } re_compile_options;
 
 
-static int
+static int /* Parameter to re_get_options() - bool (FALSE/TRUE), as returned by PL_get_...() etc  */
 re_compile_opt(atom_t opt, term_t arg, void *ctx)
 { re_compile_options *copts = ctx;
 
-  if ( opt == ATOM_optimise )
+  if ( opt == ATOM_optimise || opt == ATOM_optimize )
   { switch(effective_bool(arg))
     { case TRUE:
       { copts->flags |= RE_STUDY;
@@ -652,7 +654,7 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
     else if ( aval == ATOM_term )
       copts->capture_type = CAP_TERM;
     else
-    { PL_domain_error("capture_type", arg);
+    { return PL_domain_error("capture_type", arg);
     }
   }
 
@@ -660,10 +662,10 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
 }
 
 
+/** re_compile(+Pattern, -Regex, +Options) is det.
 
-/** re_compile(+Pattern, -Regex, +Options)
+    For documentation of this function, see pcre.pl
 */
-
 static foreign_t
 re_compile(term_t pat, term_t reb, term_t options)
 { int flags = CVT_ATOM|CVT_STRING|CVT_LIST;
@@ -697,7 +699,7 @@ re_compile(term_t pat, term_t reb, term_t options)
     if ( !(re=PL_malloc(sizeof(*re))) )
       return FALSE;
 
-    memset(re, 0, sizeof(*re));
+    memset(re, 0, sizeof *re);
 
     re->pcre = pcre;
     re->re_options = re_options;
@@ -708,6 +710,9 @@ re_compile(term_t pat, term_t reb, term_t options)
     }
     if ( !init_capture_map(re) )
     { re_free(re);
+      /* init_capture_map() has called an appropriate PL_..._error()
+	 to indicate the cause; PL_..._error() returns FALSE, so
+	 return that value. */
       return FALSE;
     }
 
@@ -724,16 +729,13 @@ re_compile(term_t pat, term_t reb, term_t options)
 }
 
 
-/**
- * re_matchsub(+Regex, +String, -Result, +Options)
- */
 
 typedef struct matchopts
 { size_t start;
 } matchopts;
 
 
-static int
+static int /* Parameter to re_get_options() - bool (FALSE/TRUE), as returned by PL_get_...() etc  */
 re_match_opt(atom_t opt, term_t arg, void *ctx)
 { matchopts *opts = ctx;
 
@@ -748,7 +750,7 @@ re_match_opt(atom_t opt, term_t arg, void *ctx)
 }
 
 
-static int
+static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
 out_of_range(size_t index)
 { term_t ex;
 
@@ -758,7 +760,7 @@ out_of_range(size_t index)
 }
 
 
-static int
+static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
 put_capname(term_t t, re_data *re, int i)
 { atom_t name;
 
@@ -769,7 +771,7 @@ put_capname(term_t t, re_data *re, int i)
 }
 
 
-static int
+static int  /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
 put_capval(term_t t, re_data *re, re_subject *subject, int i, const int ovector[])
 { const char *s = &subject->subject[ovector[i*2]];
   int len = ovector[i*2+1]-ovector[i*2];
@@ -808,9 +810,10 @@ put_capval(term_t t, re_data *re, re_subject *subject, int i, const int ovector[
   }
 }
 
-static int
+static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
 unify_match(term_t t, re_data *re, re_subject *subject,
-	    matchopts *opts, int ovsize, const int *ovector)
+	    const matchopts *opts, /* TODO: remove because unused? */
+	    int ovsize, const int *ovector)
 { int i, rc;
   term_t av   = PL_new_term_refs(4);
   term_t capn = av+0;
@@ -838,8 +841,8 @@ unify_match(term_t t, re_data *re, re_subject *subject,
 }
 
 
-static int
-re_error(int ec)
+static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
+re_error(int ec) /* ec is error code from pcre_exec */
 { switch(ec)
   { case 0:				/* Too short ovector */
       assert(0);
@@ -854,6 +857,49 @@ re_error(int ec)
       return PL_resource_error("memory");
     case PCRE_ERROR_MATCHLIMIT:
       return PL_resource_error("match_limit");
+    /* The following are all the other error codes that are
+       documented for pcre_exec(). They have been listed, to
+       aid in migration to PCRE2. */
+    case PCRE_ERROR_NOSUBSTRING:
+    case PCRE_ERROR_CALLOUT:
+    case PCRE_ERROR_BADUTF8:
+    case PCRE_ERROR_BADUTF8_OFFSET:
+    case PCRE_ERROR_PARTIAL:
+    case PCRE_ERROR_BADPARTIAL:
+    case PCRE_ERROR_INTERNAL:
+    case PCRE_ERROR_BADCOUNT:
+    case PCRE_ERROR_RECURSIONLIMIT:
+    case PCRE_ERROR_BADNEWLINE:
+    case PCRE_ERROR_BADOFFSET:
+    case PCRE_ERROR_SHORTUTF8:
+    case PCRE_ERROR_RECURSELOOP:
+    case PCRE_ERROR_JIT_STACKLIMIT:
+    case PCRE_ERROR_BADMODE:
+    case PCRE_ERROR_BADENDIANNESS:
+    case PCRE_ERROR_JIT_BADOPTION:
+    case PCRE_ERROR_BADLENGTH:
+    case PCRE_UTF8_ERR1:
+    case PCRE_UTF8_ERR2:
+    case PCRE_UTF8_ERR3:
+    case PCRE_UTF8_ERR4:
+    case PCRE_UTF8_ERR5:
+    case PCRE_UTF8_ERR6:
+    case PCRE_UTF8_ERR7:
+    case PCRE_UTF8_ERR8:
+    case PCRE_UTF8_ERR9:
+    case PCRE_UTF8_ERR10:
+    case PCRE_UTF8_ERR11:
+    case PCRE_UTF8_ERR12:
+    case PCRE_UTF8_ERR13:
+    case PCRE_UTF8_ERR14:
+    case PCRE_UTF8_ERR15:
+    case PCRE_UTF8_ERR16:
+    case PCRE_UTF8_ERR17:
+    case PCRE_UTF8_ERR18:
+    case PCRE_UTF8_ERR19:
+    case PCRE_UTF8_ERR20:
+    case PCRE_UTF8_ERR21:
+    case PCRE_UTF8_ERR22:
     default:
       assert(0);			/* TBD */
   }
@@ -862,27 +908,35 @@ re_error(int ec)
 }
 
 
-static int *
-alloc_ovector(re_data *re, int *ovector, int *ovecsize)
+static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
+alloc_ovector(re_data *re, int *ovecbuf, int *ovecsize, int **ovector)
 { int sz = (re->capture_size+1)*3;
 
+  /* In the following, malloc() is correct, - don't use realloc().
+     This is because the caller allocates ovecbuf on the stack; for
+     cleanup, the caller checks whether *ovector is still on the stack
+     and if not, it does a free(). */
   if ( sz > *ovecsize )
-  { if ( !(ovector = malloc(sz*sizeof(int))) )
-    { PL_resource_error("memory");
-      ovector = NULL;
+  { if ( !(*ovector = malloc(sz*sizeof (int))) )
+    { return PL_resource_error("memory");
     }
     *ovecsize = sz;
+  } else
+  { *ovector = ovecbuf;
   }
 
-  return ovector;
+  return TRUE;
 }
 
 
+/** re_matchsub_(+Regex, +String, -Sub:dict, +Options) is semidet.
 
+    For documentation of this function, see pcre.pl
+*/
 static foreign_t
-re_matchsub(term_t regex, term_t on, term_t result, term_t options)
+re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
 { re_data *re;
-  re_subject subject;
+  re_subject subject = { NULL, 0, 0, 0, 0 };
   matchopts opts = {0};
   int re_options;
   int flags = 0;
@@ -895,31 +949,31 @@ re_matchsub(term_t regex, term_t on, term_t result, term_t options)
   { int rc = FALSE;
     int ovecbuf[30];
     int ovecsize = 30;
-    int *ovector = alloc_ovector(re, ovecbuf, &ovecsize);
-
-    if ( ovector == NULL )
+    int *ovector;
+    if ( !(rc = alloc_ovector(re, ovecbuf, &ovecsize, &ovector)) )
       goto out;
 
     if ( opts.start )
     { if ( (opts.start=utf8_seek(subject.subject, subject.length,
 				 opts.start)) == (size_t)-1 )
-      { out_of_range(opts.start);
+      { rc = out_of_range(opts.start);
 	goto out;
       }
     }
 
-    rc = pcre_exec(re->pcre, re->extra,
-		   subject.subject, subject.length,
-		   opts.start, re_options,
-		   ovector, ovecsize);
+    { int re_rc = pcre_exec(re->pcre, re->extra,
+			    subject.subject, subject.length,
+			    opts.start, re_options,
+			    ovector, ovecsize);
 
-    if ( rc > 0 )			/* match */
-    { if ( result )
-	rc = unify_match(result, re, &subject, &opts, rc, ovector);
-      else
-	rc = TRUE;
-    } else
-    { rc = re_error(rc);
+      if ( re_rc > 0 )			/* match */
+      { if ( result )
+	  rc = unify_match(result, re, &subject, &opts, re_rc, ovector);
+	else
+	  rc = TRUE;
+      } else
+      { rc = re_error(re_rc);
+      }
     }
 
   out:
@@ -935,16 +989,25 @@ re_matchsub(term_t regex, term_t on, term_t result, term_t options)
 }
 
 
+/** re_match_(+Regex, +String) is semidet.
+    re_match_(+Regex, +String, +Options) is semidet.
+
+    For documentation of this function, see pcre.pl
+*/
 static foreign_t
-re_match(term_t regex, term_t on, term_t options)
-{ return re_matchsub(regex, on, 0, options);
+re_match_(term_t regex, term_t on, term_t options)
+{ return re_matchsub_(regex, on, 0, options);
 }
 
 
+/** re_foldl_(:Goal, +Regex, +String, ?V0, ?V, +Options) is semidet.
+
+    For documentation of this function, see pcre.pl
+*/
 static foreign_t
-re_foldl(term_t regex, term_t on,
-	 term_t closure, term_t v0, term_t v,
-	 term_t options)
+re_foldl_(term_t regex, term_t on,
+	  term_t closure, term_t v0, term_t v,
+	  term_t options)
 { re_data *re;
   re_subject subject;
   int re_options;
@@ -958,31 +1021,37 @@ re_foldl(term_t regex, term_t on,
   { int rc = FALSE;
     int ovecbuf[30];
     int ovecsize = 30;
-    int *ovector = alloc_ovector(re, ovecbuf, &ovecsize);
+    int *ovector;
     int offset = 0;
     static predicate_t pred = 0;
     term_t av = PL_new_term_refs(4);
 
-    if ( ovector == NULL )
+    if ( !(rc = alloc_ovector(re, ovecbuf, &ovecsize, &ovector)) )
       goto out;
 
     if ( !pred )
       pred = PL_predicate("re_call_folder", 4, "pcre");
 
-    if ( !PL_put_term(av+0, closure) ) return FALSE;
+    if ( !PL_put_term(av+0, closure) )
+    { rc = FALSE;
+      goto out;
+    }
 	     /* av+1 is match */
-    if ( !PL_put_term(av+2, v0) ) return FALSE;
+    if ( !PL_put_term(av+2, v0) )
+    { rc = FALSE;
+      goto out;
+    }
 	     /* av+3 = v1 */
 
     for(;;)
-    { rc = pcre_exec(re->pcre, re->extra,
-		     subject.subject, subject.length,
-		     offset, re_options,
-		     ovector, ovecsize);
+    { int re_rc = pcre_exec(re->pcre, re->extra,
+			    subject.subject, subject.length,
+			    offset, re_options,
+			    ovector, ovecsize);
 
-      if ( rc > 0 )
+      if ( re_rc > 0 )
       { PL_put_variable(av+1);
-	if ( !unify_match(av+1, re, &subject, &opts, rc, ovector) ||
+	if ( !unify_match(av+1, re, &subject, &opts, re_rc, ovector) ||
 	     !PL_call_predicate(NULL, PL_Q_PASS_EXCEPTION, pred, av) ||
 	     !PL_put_term(av+2, av+3) ||
 	     !PL_put_variable(av+3) )
@@ -993,8 +1062,11 @@ re_foldl(term_t regex, term_t on,
 	  offset++;
 	else
 	  offset = ovector[1];
-      } else
+      } else if ( re_rc == PCRE_ERROR_NOMATCH )
       { rc = PL_unify(av+2, v);
+	break;
+      } else
+      { rc = re_error(re_rc);
 	break;
       }
     }
@@ -1022,6 +1094,7 @@ install_pcre4pl(void)
 { FUNCTOR_pair2 = PL_new_functor(PL_new_atom("-"), 2);
 
   MKATOM(optimise);
+  MKATOM(optimize);
   MKATOM(bsr);
   MKATOM(compat);
   MKATOM(javascript);
@@ -1041,9 +1114,9 @@ install_pcre4pl(void)
   MKATOM(range);
   MKATOM(version);
 
-  PL_register_foreign("re_config",    1, re_config,   0);
-  PL_register_foreign("re_compile",   3, re_compile,  0);
-  PL_register_foreign("re_match_",    3, re_match,    0);
-  PL_register_foreign("re_matchsub_", 4, re_matchsub, 0);
-  PL_register_foreign("re_foldl_",    6, re_foldl,    0);
+  PL_register_foreign("re_config",    1, re_config,    0);
+  PL_register_foreign("re_compile",   3, re_compile,   0);
+  PL_register_foreign("re_match_",    3, re_match_,    0);
+  PL_register_foreign("re_matchsub_", 4, re_matchsub_, 0);
+  PL_register_foreign("re_foldl_",    6, re_foldl_,    0);
 }
