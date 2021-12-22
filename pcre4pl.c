@@ -39,6 +39,7 @@
 #include <string.h>
 #include <assert.h>
 #include <pcre.h>
+#include <stdio.h> /* for sprintf() */
 
 		 /*******************************
 		 *	      RE STRUCT		*
@@ -54,6 +55,22 @@ typedef enum cap_type
   CAP_TERM,
   CAP_RANGE
 } cap_type;
+
+/* For debugging */
+static const char *
+cap_type_str(int i)
+{ switch( i )
+  { case CAP_DEFAULT: return "CAP_DEFAULT";
+    case CAP_STRING:  return "CAP_STRING";
+    case CAP_ATOM:    return "CAP_ATOM";
+    case CAP_INTEGER: return "CAP_INTEGER";
+    case CAP_FLOAT:   return "CAP_FLOAT";
+    case CAP_NUMBER:  return "CAP_NUMBER";
+    case CAP_TERM:    return "CAP_TERM";
+    case CAP_RANGE:   return "CAP_RANGE";
+    default:          return "CAP_???";
+  }
+}
 
 typedef struct cap_how
 { atom_t	name;
@@ -298,6 +315,7 @@ set_flag(term_t arg, int *flags, int value)
       *flags |= value;
       return TRUE;
     case FALSE:
+      *flags &= ~value;
       return TRUE;
     default: /* -1 */
       return FALSE;
@@ -314,6 +332,8 @@ not_flag(term_t head, term_t arg, int *flags, int value)
   } else if ( PL_get_bool_ex(arg, &v) )
   { if ( !v )
       *flags |= value;
+    else
+      *flags &= ~value;
   } else
     return FALSE;
 
@@ -325,7 +345,7 @@ typedef struct re_optdef
 { const char *name;
   int	      flag;
   int	      mode;
-  atom_t      atom;
+  atom_t      atom; /* Filled in as-needed by re_get_options() */
 } re_optdef;
 
 #define RE_COMP 0x001
@@ -351,6 +371,10 @@ static re_optdef re_optdefs[] =
   { "empty_atstart",   PCRE_NOTEMPTY_ATSTART, RE_EXEC|RE_NEG },
   { NULL, 0}
 };
+
+#define OPTBSR_MASK (PCRE_BSR_ANYCRLF|PCRE_BSR_UNICODE)
+
+#define OPTNEWLINE_MASK (PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF)
 
 
 static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
@@ -382,6 +406,7 @@ re_get_options(term_t options, int mode, int *optp,
 	if ( !PL_get_atom_ex(arg, &aval) )
 	  return FALSE;
 
+        opt &= ~OPTBSR_MASK;
 	if ( aval == ATOM_anycrlf )
 	  opt |= PCRE_BSR_ANYCRLF;
 	else if ( aval == ATOM_unicode )
@@ -395,8 +420,7 @@ re_get_options(term_t options, int mode, int *optp,
 	if ( !PL_get_atom_ex(arg, &aval) )
 	  return FALSE;
 
-	opt &= ~PCRE_NEWLINE_ANYCRLF;
-
+	opt &= ~OPTNEWLINE_MASK;
 	if ( aval == ATOM_any )
 	  opt |= PCRE_NEWLINE_ANY;
 	else if ( aval == ATOM_anycrlf )
@@ -469,11 +493,12 @@ typedef enum re_config_type
   CFG_STRING
 } re_config_type;
 
+
 typedef struct re_config_opt
 { char		 *name;
   int		  id;
   re_config_type  type;
-  atom_t	  atom;
+  atom_t	  atom; /* Filled in as-needed by re_config() */
 } re_config_opt;
 
 static re_config_opt cfg_opts[] =
@@ -635,6 +660,7 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
 	return TRUE;
       }
       case FALSE:
+        copts->flags &= ~RE_STUDY;
 	return TRUE;
       default:
 	return FALSE;
@@ -659,6 +685,77 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
   }
 
   return TRUE;
+}
+
+
+/* For debugging (used by re_compile_options_(), re_exec_options_()) */
+static void
+re_options_str(int re_options, char *o_str)
+{
+  /* The following were extracted from pcre.h and sorted, with bsr and newline at
+     the end because they're multi-valued: */
+
+  if ( re_options & PCRE_ANCHORED )          strcat(o_str, " ANCHORED");
+  if ( re_options & PCRE_AUTO_CALLOUT )      strcat(o_str, " AUTO_CALLOUT");
+  if ( re_options & PCRE_CASELESS )          strcat(o_str, " CASELESS");
+  if ( re_options & PCRE_DOLLAR_ENDONLY )    strcat(o_str, " DOLLAR_ENDONLY");
+  if ( re_options & PCRE_DOTALL )            strcat(o_str, " DOTALL");
+  if ( re_options & PCRE_DUPNAMES )          strcat(o_str, " DUPNAMES");
+  if ( re_options & PCRE_EXTENDED )          strcat(o_str, " EXTENDED");
+  if ( re_options & PCRE_EXTRA )             strcat(o_str, " EXTRA");
+  if ( re_options & PCRE_FIRSTLINE )         strcat(o_str, " FIRSTLINE");
+  if ( re_options & PCRE_JAVASCRIPT_COMPAT ) strcat(o_str, " JAVASCRIPT_COMPAT");
+  if ( re_options & PCRE_MULTILINE )         strcat(o_str, " MULTILINE");
+  if ( re_options & PCRE_NEVER_UTF )         strcat(o_str, " NEVER_UTF"); /* PCRE_DFA_SHORTEST (overlay ) */
+
+  if ( re_options & PCRE_NOTBOL )            strcat(o_str, " NOTBOL");
+  if ( re_options & PCRE_NOTEMPTY )          strcat(o_str, " NOTEMPTY");
+  if ( re_options & PCRE_NOTEMPTY_ATSTART )  strcat(o_str, " NOTEMPTY_ATSTART");
+  if ( re_options & PCRE_NOTEOL )            strcat(o_str, " NOTEOL");
+  if ( re_options & PCRE_NO_AUTO_CAPTURE )   strcat(o_str, " NO_AUTO_CAPTURE");
+  if ( re_options & PCRE_NO_AUTO_POSSESS )   strcat(o_str, " NO_AUTO_POSSESS"); /* PCRE_DFA_RESTART (overlay ) */
+  if ( re_options & PCRE_NO_START_OPTIMIZE ) strcat(o_str, " NO_START_OPTIMIZE"); /*  PCRE_NO_START_OPTIMISE (synonym ) */
+  if ( re_options & PCRE_NO_UTF8_CHECK )     strcat(o_str, " NO_UTF8_CHECK"); /* PCRE_NO_UTF16_CHECK, PCRE_NO_UTF32_CHECK (synonym ) */
+  if ( re_options & PCRE_PARTIAL_HARD )      strcat(o_str, " PARTIAL_HARD");
+  if ( re_options & PCRE_PARTIAL_SOFT )      strcat(o_str, " PARTIAL_SOFT"); /* PCRE_PARTIAL (synonym ) */
+  if ( re_options & PCRE_UCP )               strcat(o_str, " UCP");
+  if ( re_options & PCRE_UNGREEDY )          strcat(o_str, " UNGREEDY");
+  if ( re_options & PCRE_UTF8 )              strcat(o_str, " UTF8"); /* PCRE_UTF16, PCRE_UTF32 (synonym ) */
+
+  if ( (re_options & OPTBSR_MASK)     == PCRE_BSR_ANYCRLF )       strcat(o_str, " BSR_ANYCRLF");
+  if ( (re_options & OPTBSR_MASK)     == PCRE_BSR_UNICODE )       strcat(o_str, " BSR_UNICODE");
+
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_CR )        strcat(o_str, " NEWLINE_CR");
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_LF )        strcat(o_str, " NEWLINE_LF");
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_CRLF )      strcat(o_str, " NEWLINE_CRLF");
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_ANY )       strcat(o_str, " NEWLINE_ANY");
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_ANYCRLF )   strcat(o_str, " NEWLINE_ANYCRLF");
+}
+
+
+/** '$re_compile_options'(+Options, -OptsStr) is det.
+
+    For debugging - process the Options into a string
+*/
+static foreign_t
+re_compile_options_(term_t options, term_t opts_str)
+{ int re_options = 0;
+  char o_str[1000] = { '\0', '\0' };
+  re_compile_options copts = {0, CAP_STRING};
+
+  if ( !re_get_options(options, RE_COMP, &re_options,
+		       re_compile_opt, &copts) )
+    return FALSE;
+
+  re_options_str(re_options, o_str);
+
+  /* And now the stuff that's in copts: */
+  if ( copts.flags & RE_STUDY ) strcat(o_str, " $STUDY");
+  else                          strcat(o_str, " $no-study");
+  strcat(o_str, " $");
+  strcat(o_str, cap_type_str(copts.capture_type));
+
+  return PL_unify_string_chars(opts_str, &o_str[1]);
 }
 
 
@@ -696,7 +793,7 @@ re_compile(term_t pat, term_t reb, term_t options)
 			     tableptr) ) )
   { re_data *re;
 
-    if ( !(re=PL_malloc(sizeof(*re))) )
+    if ( !(re = PL_malloc(sizeof(*re))) )
       return FALSE;
 
     memset(re, 0, sizeof *re);
@@ -747,6 +844,31 @@ re_match_opt(atom_t opt, term_t arg, void *ctx)
   }
 
   return TRUE;
+}
+
+
+/** '$re_match_options'(+Options, -OptsStr) is det.
+
+    For debugging - process the Options into a string
+*/
+static foreign_t
+re_match_options_(term_t options, term_t opts_str)
+{ int re_options = 0;
+  char o_str[1000] = { '\0', '\0' };
+  matchopts mopts = {0};
+
+  if ( !re_get_options(options, RE_EXEC, &re_options,
+		       re_match_opt, &mopts) )
+    return FALSE;
+
+  re_options_str(re_options, o_str);
+  /* And now the stuff that's in mopts: */
+  { char start_str[100];
+    sprintf(start_str, " $start=%lu", mopts.start);
+    strcat(o_str, start_str);
+  }
+
+  return PL_unify_string_chars(opts_str, &o_str[1]);
 }
 
 
@@ -946,12 +1068,15 @@ re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
 
   if ( get_re(regex, &re) &&
        re_get_subject(on, &subject, flags) )
-  { int rc = FALSE;
+  { int rc;
     int ovecbuf[30];
     int ovecsize = 30;
     int *ovector;
-    if ( !(rc = alloc_ovector(re, ovecbuf, &ovecsize, &ovector)) )
+    if ( !alloc_ovector(re, ovecbuf, &ovecsize, &ovector) )
+    {
+      rc = FALSE;
       goto out;
+    }
 
     if ( opts.start )
     { if ( (opts.start=utf8_seek(subject.subject, subject.length,
@@ -1018,7 +1143,7 @@ re_foldl_(term_t regex, term_t on,
 
   if ( get_re(regex, &re) &&
        re_get_subject(on, &subject, BUF_STACK) )
-  { int rc = FALSE;
+  { int rc;
     int ovecbuf[30];
     int ovecsize = 30;
     int *ovector;
@@ -1026,8 +1151,10 @@ re_foldl_(term_t regex, term_t on,
     static predicate_t pred = 0;
     term_t av = PL_new_term_refs(4);
 
-    if ( !(rc = alloc_ovector(re, ovecbuf, &ovecsize, &ovector)) )
+    if ( !alloc_ovector(re, ovecbuf, &ovecsize, &ovector) )
+    { rc = FALSE;
       goto out;
+    }
 
     if ( !pred )
       pred = PL_predicate("re_call_folder", 4, "pcre");
@@ -1119,4 +1246,6 @@ install_pcre4pl(void)
   PL_register_foreign("re_match_",    3, re_match_,    0);
   PL_register_foreign("re_matchsub_", 4, re_matchsub_, 0);
   PL_register_foreign("re_foldl_",    6, re_foldl_,    0);
+  PL_register_foreign("$re_compile_options", 2, re_compile_options_, 0);
+  PL_register_foreign("$re_match_options", 2, re_match_options_, 0);
 }

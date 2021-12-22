@@ -191,6 +191,53 @@ test(config_stackrecurse) :-
     re_config(stackrecurse(V)),
     must_be(boolean, V).
 
+test(compile_config_1,
+     OptsStr == "ANCHORED CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED EXTRA FIRSTLINE JAVASCRIPT_COMPAT MULTILINE NO_UTF8_CHECK UCP UNGREEDY BSR_ANYCRLF NEWLINE_CRLF $STUDY $CAP_RANGE") :-
+    pcre:'$re_compile_options'([anchored(true),
+                                caseless(true),
+                                dollar_endonly(true),
+                                dotall(true),
+                                dupnames(true),
+                                extended(true),
+                                extra(true),
+                                firstline(true),
+                                compat(javascript),
+                                multiline(true),
+                                ucp(true),
+                                ungreedy(true),
+                                optimize(true),
+                                capture_type(range),
+                                bsr(anycrlf),
+                                newline(crlf)
+                               ],
+                               OptsStr).
+test(compile_config_2,
+     OptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $no-study $CAP_STRING") :-
+    pcre:'$re_compile_options'([optimize(false)],
+                               OptsStr).
+test(compile_config_3,
+     OptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $no-study $CAP_ATOM") :-
+    pcre:'$re_compile_options'([multiline(false),caseless(false),capture_type(atom),foo],
+                               OptsStr).
+test(compile_config_4,
+     OptsStr == "CASELESS MULTILINE NO_UTF8_CHECK NEWLINE_LF $no-study $CAP_TERM") :-
+    pcre:'$re_compile_options'([qqsv,zot(123),optimise(false),capture_type(term),multiline(true),caseless(true),newline(lf)],
+                               OptsStr).
+test(compile_config_5, error(domain_error(newline_option, qqsv), _)) :-
+    pcre:'$re_compile_options'([newline(qqsv)], _OptsStr).
+test(compile_exec_1,
+     OptsStr == "ANCHORED NOTBOL NOTEMPTY NOTEMPTY_ATSTART NOTEOL NO_UTF8_CHECK NEWLINE_ANYCRLF $start=666") :-
+    pcre:'$re_match_options'([anchored(true),bol(false),eol(false),empty(false),empty_atstart(false),start(666)],
+                             OptsStr).
+test(compile_exec_2,
+     OptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0") :-
+    pcre:'$re_match_options'([anchored(false),bol(true),eol(true),empty(true),empty_atstart(true)],
+                             OptsStr).
+test(compile_exec_3,
+     OptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0") :-
+    pcre:'$re_match_options'([],
+                             OptsStr).
+
 :- end_tests(pcre).
 
 add_match(Dict, [Dict.0|List], List).
