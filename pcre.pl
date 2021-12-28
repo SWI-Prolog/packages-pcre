@@ -109,8 +109,11 @@ cache. The cache can be cleared using re_flush/0.
 %     true.
 %     ```
 %
-%   Options (behavior is unspecified if an option is repeated; unrecognized
-%            options are ignored):
+%   Defined Options are  given    below.   Please  consult  the PCRE
+%   documentation for details.   If an option is repeated, the first
+%   value is used and subsequent values are ignored.    Unrecognized
+%   options are ignored. Unless otherwise specified, boolean options
+%   default to =false=.
 %
 %     * anchored(Bool)
 %     If =true=, match only at the first position
@@ -473,18 +476,24 @@ alnum(L) -->
 %!  re_compile(+Pattern, -Regex, +Options) is det.
 %
 %   Compiles Pattern to a Regex _blob_ of type =regex= (see blob/2).
-%   Defined Options are  defined  below.   Please  consult  the PCRE
-%   documentation for details.  Behavior is unspecified if an option
-%   is repeated with a different value;     unrecognized options are
-%   ignored.
+%   Defined Options are  given    below.   Please  consult  the PCRE
+%   documentation for details.   If an option is repeated, the first
+%   value is used and subsequent values are ignored.    Unrecognized
+%   options are ignored. Unless otherwise specified, boolean options
+%   default to =false=.
 %
 %     * anchored(Bool)
-%     Force pattern anchoring
+%     If =true=, match only at the first position
+%     * auto_capture(Bool)
+%     Enable use of numbered capturing parentheses.
+%     (default =true=)
 %     * bsr(Mode)
 %     If =anycrlf=, \R only matches CR, LF or CRLF.  If =unicode=,
 %     \R matches all Unicode line endings.
 %     * caseless(Bool)
 %     If =true=, do caseless matching.
+%     * compat(With)
+%     If =javascript=, JavaScript compatibility
 %     * dollar_endonly(Bool)
 %     If =true=, $ not to match newline at end
 %     * dotall(Bool)
@@ -497,8 +506,11 @@ alnum(L) -->
 %     If =true=, PCRE extra features (not much use currently)
 %     * firstline(Bool)
 %     If =true=, force matching to be before newline
-%     * compat(With)
-%     If =javascript=, JavaScript compatibility
+%     * greedY(Bool)
+%     If =true=, operators such as `+` and `*` are greedy unles
+%     followed by `?`; if =false=, the operators are not greedy
+%     and `?` has the opposite meaning.
+%     (default =true=)
 %     * multiline(Bool)
 %     If =true=, ^ and $ match newlines within data
 %     * newline(Mode)
@@ -508,8 +520,6 @@ alnum(L) -->
 %     LF and finally if =crlf= recognize CRLF as newline.
 %     * ucp(Bool)
 %     If =true=, use Unicode properties for \d, \w, etc.
-%     * ungreedy(Bool)
-%     If =true=, invert greediness of quantifiers
 %
 %   In addition to the options above that directly map to pcre flags the
 %   following options are processed:

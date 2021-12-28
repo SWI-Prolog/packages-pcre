@@ -191,9 +191,13 @@ test(config_stackrecurse) :-
     re_config(stackrecurse(V)),
     must_be(boolean, V).
 
+test(compile_config_0, OptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $no-study $CAP_STRING") :-
+    pcre:'$re_compile_options'([], OptsStr).
+
 test(compile_config_1,
-     OptsStr == "ANCHORED CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED EXTRA FIRSTLINE JAVASCRIPT_COMPAT MULTILINE NO_UTF8_CHECK UCP UNGREEDY BSR_ANYCRLF NEWLINE_CRLF $STUDY $CAP_RANGE") :-
+     OptsStr == "ANCHORED CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED EXTRA FIRSTLINE JAVASCRIPT_COMPAT MULTILINE NO_AUTO_CAPTURE NO_UTF8_CHECK UCP UNGREEDY BSR_ANYCRLF NEWLINE_CRLF $STUDY $CAP_RANGE") :-
     pcre:'$re_compile_options'([anchored(true),
+                                auto_capture(false),
                                 caseless(true),
                                 dollar_endonly(true),
                                 dotall(true),
@@ -201,14 +205,64 @@ test(compile_config_1,
                                 extended(true),
                                 extra(true),
                                 firstline(true),
+                                greedy(false),
                                 compat(javascript),
                                 multiline(true),
                                 ucp(true),
-                                ungreedy(true),
                                 optimize(true),
                                 capture_type(range),
                                 bsr(anycrlf),
                                 newline(crlf)
+                               ],
+                               OptsStr).
+% The documentation says that behavior is unspecified if an option is
+% given multiple times; the current code keeps the last value
+test(compile_config_1_inverse,
+     OptsStr == "JAVASCRIPT_COMPAT NO_UTF8_CHECK BSR_UNICODE NEWLINE_CR $no-study $CAP_RANGE") :-
+    pcre:'$re_compile_options'([
+                                anchored(false),
+                                auto_capture(true),
+                                caseless(false),
+                                dollar_endonly(false),
+                                dotall(false),
+                                dupnames(false),
+                                extended(false),
+                                extra(false),
+                                firstline(false),
+                                greedy(true),
+                                compat(javascript), % duplicated
+                                multiline(false),
+                                ucp(false),
+                                bol(false),
+                                eol(false),
+                                empty(false),
+                                empty_atstart(false),
+                                optimize(false),
+                                capture_type(range),
+                                bsr(unicode),
+                                newline(cr),
+                                % Invert them (they'll be ignored):
+                                anchored(true),
+                                caseless(true),
+                                dollar_endonly(true),
+                                dotall(true),
+                                dupnames(true),
+                                extended(true),
+                                extra(true),
+                                firstline(true),
+                                greedy(false),
+                                compat(ignored),
+                                multiline(true),
+                                auto_capture(false),
+                                ucp(true),
+                                bol(true),
+                                eol(true),
+                                empty(true),
+                                empty_atstart(true),
+                                optimize(true),
+                                capture_type(string),
+                                bsr(anycrlf),
+                                newline(lf)
                                ],
                                OptsStr).
 test(compile_config_2,
@@ -223,7 +277,7 @@ test(compile_config_4,
      OptsStr == "CASELESS MULTILINE NO_UTF8_CHECK NEWLINE_LF $no-study $CAP_TERM") :-
     pcre:'$re_compile_options'([qqsv,zot(123),optimise(false),capture_type(term),multiline(true),caseless(true),newline(lf)],
                                OptsStr).
-test(compile_config_5, error(domain_error(newline_option, qqsv), _)) :-
+test(compile_config_5, error(type_error(option, newline(qqsv)), _)) :-
     pcre:'$re_compile_options'([newline(qqsv)], _OptsStr).
 test(compile_exec_1,
      OptsStr == "ANCHORED NOTBOL NOTEMPTY NOTEMPTY_ATSTART NOTEOL NO_UTF8_CHECK NEWLINE_ANYCRLF $start=666") :-

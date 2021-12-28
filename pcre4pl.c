@@ -68,7 +68,7 @@ cap_type_str(int i)
     case CAP_NUMBER:  return "CAP_NUMBER";
     case CAP_TERM:    return "CAP_TERM";
     case CAP_RANGE:   return "CAP_RANGE";
-    default:          return "CAP_???";
+    default:	      return "CAP_???";
   }
 }
 
@@ -298,24 +298,32 @@ static int /* FALSE/TRUE or -1 for error */
 effective_bool(term_t arg)
 { if ( arg )
   { int v;
-
     if ( PL_get_bool_ex(arg, &v) )
       return v;
-    return -1;
+    return -1; /* Error: neither FALSE nor TRUE */
   }
-
   return TRUE;
 }
 
 
 static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
-set_flag(term_t arg, int *flags, int value)
-{ switch( effective_bool(arg) )
+set_flag(term_t arg, int *flags, int mask, int value, int invert, int *seen)
+{ *flags &= mask;
+  if ( *seen&value )
+    return TRUE; /* repeated option - ignore */
+  *seen |= value;
+  switch( effective_bool(arg) )
   { case TRUE:
-      *flags |= value;
+      if ( invert )
+	*flags &= ~value;
+      else
+	*flags |= value;
       return TRUE;
     case FALSE:
-      *flags &= ~value;
+      if ( invert )
+	*flags |= value;
+      else
+	*flags &= ~value;
       return TRUE;
     default: /* -1 */
       return FALSE;
@@ -323,37 +331,45 @@ set_flag(term_t arg, int *flags, int value)
 }
 
 
-static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
-not_flag(term_t head, term_t arg, int *flags, int value)
-{ int v;
-
-  if ( !arg )
-  { return PL_type_error("option", head);
-  } else if ( PL_get_bool_ex(arg, &v) )
-  { if ( !v )
-      *flags |= value;
-    else
-      *flags &= ~value;
-  } else
-    return FALSE;
-
-  return TRUE;
-}
-
-
 typedef struct re_optdef
 { const char *name;
   int	      flag;
   int	      mode;
-  atom_t      atom; /* Filled in as-needed by re_get_options() */
+  atom_t      atom; /* Filled in as-needed by lookup_optdef() */
 } re_optdef;
 
 #define RE_COMP 0x001
 #define RE_EXEC 0x002
 #define RE_NEG	0x004
 
+
+static const re_optdef*
+lookup_optdef(re_optdef opt_defs[], atom_t name, int mode)
+{ re_optdef *def;
+  for(def=opt_defs; def->name; def++)
+  { if ( !def->atom ) /* lazily fill in atoms in lookup table */
+      def->atom = PL_new_atom(def->name);
+    if ( def->atom == name && (def->mode&mode) )
+      return def;
+  }
+  return NULL;
+}
+
+
+static int/* bool (FALSE/TRUE), as returned by PL_..._error() */
+lookup_and_apply_optdef(re_optdef opt_defs[], atom_t name, int mode,
+			term_t option_term, term_t arg, int mask,
+			int *optp, int *seen)
+{ const re_optdef *def = lookup_optdef(opt_defs, name, mode);
+  if ( def )
+    return set_flag(arg, optp, mask, def->flag, def->mode&RE_NEG, seen);
+  return PL_type_error("option", option_term);
+}
+
+
 static re_optdef re_optdefs[] =
 { { "anchored",	       PCRE_ANCHORED,	      RE_COMP|RE_EXEC },
+  { "auto_capture",    PCRE_NO_AUTO_CAPTURE,  RE_COMP|RE_NEG },
   { "caseless",	       PCRE_CASELESS,	      RE_COMP },
   { "dollar_endonly",  PCRE_DOLLAR_ENDONLY,   RE_COMP },
   { "dotall",	       PCRE_DOTALL,	      RE_COMP },
@@ -361,10 +377,11 @@ static re_optdef re_optdefs[] =
   { "extended",	       PCRE_EXTENDED,	      RE_COMP },
   { "extra",	       PCRE_EXTRA,	      RE_COMP },
   { "firstline",       PCRE_FIRSTLINE,	      RE_COMP },
+  { "greedy",	       PCRE_UNGREEDY,	      RE_COMP|RE_NEG },
   { "multiline",       PCRE_MULTILINE,	      RE_COMP },
-  { "no_auto_capture", PCRE_NO_AUTO_CAPTURE,  RE_COMP },
+  { "no_auto_capture", PCRE_NO_AUTO_CAPTURE,  RE_COMP }, /* backwards compatibility */
   { "ucp",	       PCRE_UCP,	      RE_COMP },
-  { "ungreedy",	       PCRE_UNGREEDY,	      RE_COMP },
+  { "ungreedy",	       PCRE_UNGREEDY,	      RE_COMP }, /* backwards compatibility */
   { "bol",	       PCRE_NOTBOL,	      RE_EXEC|RE_NEG },
   { "eol",	       PCRE_NOTEOL,	      RE_EXEC|RE_NEG },
   { "empty",	       PCRE_NOTEMPTY,	      RE_EXEC|RE_NEG },
@@ -372,9 +389,41 @@ static re_optdef re_optdefs[] =
   { NULL, 0}
 };
 
+static re_optdef re_optbsrs[] = /* TODO: verify RE_EXEC: */
+{ { "anycrlf",	       PCRE_BSR_ANYCRLF,      RE_COMP|RE_EXEC },
+  { "unicode",	       PCRE_BSR_UNICODE,      RE_COMP|RE_EXEC },
+  { NULL }
+};
+
 #define OPTBSR_MASK (PCRE_BSR_ANYCRLF|PCRE_BSR_UNICODE)
 
+static re_optdef re_optnewlines[] = /* TODO: verify RE_EXEC: */
+{ { "any",	       PCRE_NEWLINE_ANY,      RE_COMP|RE_EXEC },
+  { "anycrlf",	       PCRE_NEWLINE_ANYCRLF,  RE_COMP|RE_EXEC },
+  { "crlf",	       PCRE_NEWLINE_CRLF,     RE_COMP|RE_EXEC },
+  { "lf",	       PCRE_NEWLINE_LF,	      RE_COMP|RE_EXEC },
+  { "cr",	       PCRE_NEWLINE_CR,	      RE_COMP|RE_EXEC },
+  { NULL }
+};
+
 #define OPTNEWLINE_MASK (PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF)
+
+
+static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
+get_arg_1_if_any(term_t head, atom_t *name, size_t *arity, term_t *arg)
+{ if ( PL_get_name_arity(head, name, arity) && *arity <= 1 )
+  { term_t argt = PL_new_term_ref();
+    if ( *arity == 1 )
+    { _PL_get_arg(1, head, argt);
+      *arg = argt;
+    } else
+    { *arg = 0;
+    }
+    return TRUE;
+  }
+  *arg = 0; /* Make compiler's flow analysis happy */
+  return PL_type_error("option", head);
+}
 
 
 static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
@@ -383,103 +432,64 @@ re_get_options(term_t options, int mode, int *optp,
 	       void *ctx)
 { term_t tail = PL_copy_term_ref(options);
   term_t head = PL_new_term_ref();
-  term_t argt = PL_new_term_ref();
-  int opt = PCRE_NEWLINE_ANYCRLF|PCRE_NO_UTF8_CHECK;
+  int seen = 0;
+  int seen_bsr = FALSE;
+  int seen_newlines = FALSE;
+  *optp = PCRE_NEWLINE_ANYCRLF|PCRE_NO_UTF8_CHECK;
 
   while(PL_get_list_ex(tail, head, tail))
   { atom_t name;
     size_t arity;
-
-    if ( PL_get_name_arity(head, &name, &arity) && arity <= 1 )
-    { term_t arg;
-
-      if ( arity == 1 )
-      { _PL_get_arg(1, head, argt);
-	arg = argt;
-      } else
-      { arg = 0;
-      }
-
-      if ( name == ATOM_bsr && arg )
+    term_t arg;
+    if ( get_arg_1_if_any(head, &name, &arity, &arg) )
+    { if ( name == ATOM_bsr && arg )
       { atom_t aval;
-
-	if ( !PL_get_atom_ex(arg, &aval) )
+	if ( seen_bsr )
+	  return TRUE;
+	seen_bsr = TRUE;
+	if ( !PL_get_atom_ex(arg, &aval) ||
+	     !lookup_and_apply_optdef(re_optbsrs, aval, RE_COMP,
+				      head, 0, ~OPTBSR_MASK, optp, &seen) )
 	  return FALSE;
-
-        opt &= ~OPTBSR_MASK;
-	if ( aval == ATOM_anycrlf )
-	  opt |= PCRE_BSR_ANYCRLF;
-	else if ( aval == ATOM_unicode )
-	  opt |= PCRE_BSR_UNICODE;
-	else
-	{ return PL_domain_error("bsr_option", arg);
-	}
       } else if ( name == ATOM_newline && arg )
       { atom_t aval;
-
-	if ( !PL_get_atom_ex(arg, &aval) )
+	if ( seen_newlines )
+	  return TRUE;
+	seen_newlines = TRUE;
+	if (!PL_get_atom_ex(arg, &aval) ||
+	    !lookup_and_apply_optdef(re_optnewlines, aval, RE_COMP,
+				     head, 0, ~OPTNEWLINE_MASK, optp, &seen) )
 	  return FALSE;
-
-	opt &= ~OPTNEWLINE_MASK;
-	if ( aval == ATOM_any )
-	  opt |= PCRE_NEWLINE_ANY;
-	else if ( aval == ATOM_anycrlf )
-	  opt |= PCRE_NEWLINE_ANYCRLF;
-	else if ( aval == ATOM_crlf )
-	  opt |= PCRE_NEWLINE_CRLF;
-	else if ( aval == ATOM_lf )
-	  opt |= PCRE_NEWLINE_LF;
-	else if ( aval == ATOM_cr )
-	  opt |= PCRE_NEWLINE_CR;
-	else
-	{ return PL_domain_error("newline_option", arg);
-	}
-      } else if ( name == ATOM_compat && arg && mode == RE_COMP )
+      } else if ( name == ATOM_compat && arg && mode&RE_COMP )
       { atom_t aval;
-
+	if ( seen&PCRE_JAVASCRIPT_COMPAT )
+	  continue;
+	seen |= PCRE_JAVASCRIPT_COMPAT;
+	/* No need for a mask - the only flag option is positive */
 	if ( !PL_get_atom_ex(arg, &aval) )
 	  return FALSE;
-
 	if ( aval == ATOM_javascript )
-	  opt |= PCRE_JAVASCRIPT_COMPAT;
+	  *optp |= PCRE_JAVASCRIPT_COMPAT;
 	else
-	{ return PL_domain_error("compat_option", arg);
-	}
+	  return PL_domain_error("compat_option", arg);
       } else
-      { re_optdef *def;
-
-	for(def=re_optdefs; def->name; def++)
-	{ if ( !def->atom )
-	    def->atom = PL_new_atom(def->name);
-	  if ( def->atom == name && (def->mode&mode) )
-	  { if ( (def->mode&RE_NEG) )
-	    { if ( !not_flag(head, arg, &opt, def->flag) )
-		return FALSE;
-	    } else
-	    { if ( !set_flag(arg, &opt, def->flag) )
-		return FALSE;
-	    }
-	    break;
-	  }
-	}
-	if ( def->name )
-	  continue;
-	if ( func )
-	{ if ( !(*func)(name, arity == 0 ? 0 : arg, ctx) )
+      { const re_optdef *def = lookup_optdef(re_optdefs, name, mode);
+	if ( def )
+	{ if ( !set_flag(arg, optp, ~def->flag, def->flag, def->mode&RE_NEG, &seen) )
 	    return FALSE;
+	} else if ( func )
+	{  if ( !(*func)(name, arg, ctx) )
+	    return FALSE;
+	} else
+	{  return PL_type_error("option", head);
 	}
       }
-    } else
-    { return PL_type_error("option", head);
+    } else /* !get_arg_1_if_any() */
+    { return FALSE;
     }
   }
 
-  if ( PL_get_nil_ex(tail) )
-  { *optp  = opt;
-    return TRUE;
-  }
-
-  return FALSE;
+  return PL_get_nil_ex(tail);
 }
 
 
@@ -607,27 +617,27 @@ init_capture_map(re_data *re)
 
 	  assert(ci < re->capture_size+1);
 
-	  if ( (fs=strrchr(s, '_')) )
-	  { if ( fs[1] && !fs[2] )
-	    { len = fs-s;
+	  if ( (fs=strrchr(s, '_')) && fs[1] && !fs[2] )
+	  { len = fs-s;
 
-	      switch(fs[1])
-	      { case 'S': re->capture_names[ci].type = CAP_STRING;  break;
-		case 'A': re->capture_names[ci].type = CAP_ATOM;    break;
-		case 'I': re->capture_names[ci].type = CAP_INTEGER; break;
-		case 'F': re->capture_names[ci].type = CAP_FLOAT;   break;
-		case 'N': re->capture_names[ci].type = CAP_NUMBER;  break;
-		case 'T': re->capture_names[ci].type = CAP_TERM;    break;
-		case 'R': re->capture_names[ci].type = CAP_RANGE;   break;
-		default:
-		{ term_t ex;
+	    switch(fs[1])
+	    { case 'S': re->capture_names[ci].type = CAP_STRING;  break;
+	      case 'A': re->capture_names[ci].type = CAP_ATOM;    break;
+	      case 'I': re->capture_names[ci].type = CAP_INTEGER; break;
+	      case 'F': re->capture_names[ci].type = CAP_FLOAT;   break;
+	      case 'N': re->capture_names[ci].type = CAP_NUMBER;  break;
+	      case 'T': re->capture_names[ci].type = CAP_TERM;    break;
+	      case 'R': re->capture_names[ci].type = CAP_RANGE;   break;
+	      default:
+	      { term_t ex;
 
-		  return ( (ex=PL_new_term_ref()) &&
-			   PL_put_atom_chars(ex, &fs[1]) &&
-			   PL_existence_error("re_type_flag", ex) );
-		}
+		return ( (ex=PL_new_term_ref()) &&
+			 PL_put_atom_chars(ex, &fs[1]) &&
+			 PL_existence_error("re_type_flag", ex) );
 	      }
 	    }
+	  } else
+	  { re->capture_names[ci].type = re->capture_type;
 	  }
 
 	  if ( !(name = PL_new_atom_mbchars(REP_UTF8, len, s)) )
@@ -644,8 +654,10 @@ init_capture_map(re_data *re)
 
 
 typedef struct re_compile_options
-{ int		flags;
+{ int		flags; /* RE_STUDY */
   cap_type	capture_type;
+  int		seen_flags;
+  int		seen_cap;
 } re_compile_options;
 
 
@@ -654,13 +666,16 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
 { re_compile_options *copts = ctx;
 
   if ( opt == ATOM_optimise || opt == ATOM_optimize )
-  { switch(effective_bool(arg))
+  { if ( copts->seen_flags&RE_STUDY )
+      return TRUE;
+    copts->seen_flags |= RE_STUDY;
+    switch(effective_bool(arg))
     { case TRUE:
       { copts->flags |= RE_STUDY;
 	return TRUE;
       }
       case FALSE:
-        copts->flags &= ~RE_STUDY;
+	copts->flags &= ~RE_STUDY;
 	return TRUE;
       default:
 	return FALSE;
@@ -670,6 +685,10 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
 
     if ( !PL_get_atom_ex(arg, &aval) )
       return FALSE;
+
+    if ( copts->seen_cap )
+      return TRUE;
+    copts->seen_cap = TRUE;
 
     if ( aval == ATOM_range )
       copts->capture_type = CAP_RANGE;
@@ -695,41 +714,41 @@ re_options_str(int re_options, char *o_str)
   /* The following were extracted from pcre.h and sorted, with bsr and newline at
      the end because they're multi-valued: */
 
-  if ( re_options & PCRE_ANCHORED )          strcat(o_str, " ANCHORED");
-  if ( re_options & PCRE_AUTO_CALLOUT )      strcat(o_str, " AUTO_CALLOUT");
-  if ( re_options & PCRE_CASELESS )          strcat(o_str, " CASELESS");
+  if ( re_options & PCRE_ANCHORED )	     strcat(o_str, " ANCHORED");
+  if ( re_options & PCRE_AUTO_CALLOUT )	     strcat(o_str, " AUTO_CALLOUT");
+  if ( re_options & PCRE_CASELESS )	     strcat(o_str, " CASELESS");
   if ( re_options & PCRE_DOLLAR_ENDONLY )    strcat(o_str, " DOLLAR_ENDONLY");
-  if ( re_options & PCRE_DOTALL )            strcat(o_str, " DOTALL");
-  if ( re_options & PCRE_DUPNAMES )          strcat(o_str, " DUPNAMES");
-  if ( re_options & PCRE_EXTENDED )          strcat(o_str, " EXTENDED");
-  if ( re_options & PCRE_EXTRA )             strcat(o_str, " EXTRA");
-  if ( re_options & PCRE_FIRSTLINE )         strcat(o_str, " FIRSTLINE");
+  if ( re_options & PCRE_DOTALL )	     strcat(o_str, " DOTALL");
+  if ( re_options & PCRE_DUPNAMES )	     strcat(o_str, " DUPNAMES");
+  if ( re_options & PCRE_EXTENDED )	     strcat(o_str, " EXTENDED");
+  if ( re_options & PCRE_EXTRA )	     strcat(o_str, " EXTRA");
+  if ( re_options & PCRE_FIRSTLINE )	     strcat(o_str, " FIRSTLINE");
   if ( re_options & PCRE_JAVASCRIPT_COMPAT ) strcat(o_str, " JAVASCRIPT_COMPAT");
-  if ( re_options & PCRE_MULTILINE )         strcat(o_str, " MULTILINE");
-  if ( re_options & PCRE_NEVER_UTF )         strcat(o_str, " NEVER_UTF"); /* PCRE_DFA_SHORTEST (overlay ) */
+  if ( re_options & PCRE_MULTILINE )	     strcat(o_str, " MULTILINE");
+  if ( re_options & PCRE_NEVER_UTF )	     strcat(o_str, " NEVER_UTF"); /* PCRE_DFA_SHORTEST (overlay ) */
 
-  if ( re_options & PCRE_NOTBOL )            strcat(o_str, " NOTBOL");
-  if ( re_options & PCRE_NOTEMPTY )          strcat(o_str, " NOTEMPTY");
+  if ( re_options & PCRE_NOTBOL )	     strcat(o_str, " NOTBOL");
+  if ( re_options & PCRE_NOTEMPTY )	     strcat(o_str, " NOTEMPTY");
   if ( re_options & PCRE_NOTEMPTY_ATSTART )  strcat(o_str, " NOTEMPTY_ATSTART");
-  if ( re_options & PCRE_NOTEOL )            strcat(o_str, " NOTEOL");
+  if ( re_options & PCRE_NOTEOL )	     strcat(o_str, " NOTEOL");
   if ( re_options & PCRE_NO_AUTO_CAPTURE )   strcat(o_str, " NO_AUTO_CAPTURE");
   if ( re_options & PCRE_NO_AUTO_POSSESS )   strcat(o_str, " NO_AUTO_POSSESS"); /* PCRE_DFA_RESTART (overlay ) */
   if ( re_options & PCRE_NO_START_OPTIMIZE ) strcat(o_str, " NO_START_OPTIMIZE"); /*  PCRE_NO_START_OPTIMISE (synonym ) */
   if ( re_options & PCRE_NO_UTF8_CHECK )     strcat(o_str, " NO_UTF8_CHECK"); /* PCRE_NO_UTF16_CHECK, PCRE_NO_UTF32_CHECK (synonym ) */
-  if ( re_options & PCRE_PARTIAL_HARD )      strcat(o_str, " PARTIAL_HARD");
-  if ( re_options & PCRE_PARTIAL_SOFT )      strcat(o_str, " PARTIAL_SOFT"); /* PCRE_PARTIAL (synonym ) */
-  if ( re_options & PCRE_UCP )               strcat(o_str, " UCP");
-  if ( re_options & PCRE_UNGREEDY )          strcat(o_str, " UNGREEDY");
-  if ( re_options & PCRE_UTF8 )              strcat(o_str, " UTF8"); /* PCRE_UTF16, PCRE_UTF32 (synonym ) */
+  if ( re_options & PCRE_PARTIAL_HARD )	     strcat(o_str, " PARTIAL_HARD");
+  if ( re_options & PCRE_PARTIAL_SOFT )	     strcat(o_str, " PARTIAL_SOFT"); /* PCRE_PARTIAL (synonym ) */
+  if ( re_options & PCRE_UCP )		     strcat(o_str, " UCP");
+  if ( re_options & PCRE_UNGREEDY )	     strcat(o_str, " UNGREEDY");
+  if ( re_options & PCRE_UTF8 )		     strcat(o_str, " UTF8"); /* PCRE_UTF16, PCRE_UTF32 (synonym ) */
 
-  if ( (re_options & OPTBSR_MASK)     == PCRE_BSR_ANYCRLF )       strcat(o_str, " BSR_ANYCRLF");
-  if ( (re_options & OPTBSR_MASK)     == PCRE_BSR_UNICODE )       strcat(o_str, " BSR_UNICODE");
+  if ( (re_options & OPTBSR_MASK)     == PCRE_BSR_ANYCRLF )	  strcat(o_str, " BSR_ANYCRLF");
+  if ( (re_options & OPTBSR_MASK)     == PCRE_BSR_UNICODE )	  strcat(o_str, " BSR_UNICODE");
 
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_CR )        strcat(o_str, " NEWLINE_CR");
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_LF )        strcat(o_str, " NEWLINE_LF");
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_CRLF )      strcat(o_str, " NEWLINE_CRLF");
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_ANY )       strcat(o_str, " NEWLINE_ANY");
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_ANYCRLF )   strcat(o_str, " NEWLINE_ANYCRLF");
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_CR )	  strcat(o_str, " NEWLINE_CR");
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_LF )	  strcat(o_str, " NEWLINE_LF");
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_CRLF )	  strcat(o_str, " NEWLINE_CRLF");
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_ANY )	  strcat(o_str, " NEWLINE_ANY");
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_ANYCRLF )	  strcat(o_str, " NEWLINE_ANYCRLF");
 }
 
 
@@ -741,7 +760,7 @@ static foreign_t
 re_compile_options_(term_t options, term_t opts_str)
 { int re_options = 0;
   char o_str[1000] = { '\0', '\0' };
-  re_compile_options copts = {0, CAP_STRING};
+  re_compile_options copts = {0, CAP_STRING, FALSE, FALSE};
 
   if ( !re_get_options(options, RE_COMP, &re_options,
 		       re_compile_opt, &copts) )
@@ -751,7 +770,7 @@ re_compile_options_(term_t options, term_t opts_str)
 
   /* And now the stuff that's in copts: */
   if ( copts.flags & RE_STUDY ) strcat(o_str, " $STUDY");
-  else                          strcat(o_str, " $no-study");
+  else				strcat(o_str, " $no-study");
   strcat(o_str, " $");
   strcat(o_str, cap_type_str(copts.capture_type));
 
@@ -829,6 +848,7 @@ re_compile(term_t pat, term_t reb, term_t options)
 
 typedef struct matchopts
 { size_t start;
+  int    seen_start;
 } matchopts;
 
 
@@ -836,11 +856,11 @@ static int /* Parameter to re_get_options() - bool (FALSE/TRUE), as returned by 
 re_match_opt(atom_t opt, term_t arg, void *ctx)
 { matchopts *opts = ctx;
 
-  if ( arg )
-  { if ( opt == ATOM_start )
-    { if ( !PL_get_size_ex(arg, &opts->start) )
-	return FALSE;
-    }
+  if ( arg && opt == ATOM_start )
+  { if ( opts->seen_start )
+      return TRUE;
+    opts->seen_start = TRUE;
+    return PL_get_size_ex(arg, &opts->start);
   }
 
   return TRUE;
@@ -855,7 +875,7 @@ static foreign_t
 re_match_options_(term_t options, term_t opts_str)
 { int re_options = 0;
   char o_str[1000] = { '\0', '\0' };
-  matchopts mopts = {0};
+  matchopts mopts = {0, FALSE};
 
   if ( !re_get_options(options, RE_EXEC, &re_options,
 		       re_match_opt, &mopts) )
@@ -942,6 +962,7 @@ unify_match(term_t t, re_data *re, re_subject *subject,
   term_t caps = av+1;
   term_t pair = av+2;
   term_t list = av+3;
+  (void) opts;  /* TODO: remove because unused? */
 
   PL_put_nil(list);
   for(i=ovsize-1; i>=0; i--)
@@ -1073,8 +1094,7 @@ re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
     int ovecsize = 30;
     int *ovector;
     if ( !alloc_ovector(re, ovecbuf, &ovecsize, &ovector) )
-    {
-      rc = FALSE;
+    { rc = FALSE;
       goto out;
     }
 
