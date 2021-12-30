@@ -97,6 +97,14 @@ test(typed2, Sub == re_match{0:"2017-04-20",
                 "2017-04-20", Sub, []).
 test(range, Sub == re_match{0:"Name: value", value:6-5}) :-
     re_matchsub(".*:\\s(?<value_R>.*)"/x, "Name: value", Sub, []).
+test(capture_string, Subs == re_match{0:"abc", 1:"a", 2:"b", 3:"c"}) :-
+    re_matchsub('(a)(b)(c)', 'xabc', Subs, [capture_type(string)]).
+test(capture_atom, [true(Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'}), fixme(global_capture_type)]) :-
+    re_matchsub('(a)(b)(c)', 'xabc', Subs, [capture_type(atom)]).
+test(capture_range, [true(Subs == re_match{0:'abc', 1:0-1, 2:1-1, 3:2-1}), fixme(global_capture_type)]) :-
+    re_matchsub('(a+)(b+)(c+)', 'xabc', Subs, [extended(true), capture_type(range)]).
+test(capture_atom2, [true(Subs == re_match{0:"Name: value", value:'value'}), fixme(global_capture_type)]) :-
+    re_matchsub(".*:\\s(?<value>.*)", "Name: value", Subs, [extended(true), capture_type(atom)]).
 test(split, Split == ["","a","b","aa","c"]) :-
     re_split("a+", "abaac", Split, []).
 test(replace, NewString == "Abaac") :-

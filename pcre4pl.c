@@ -39,7 +39,6 @@
 #include <string.h>
 #include <assert.h>
 #include <pcre.h>
-#include <stdio.h> /* for sprintf() */
 
 		 /*******************************
 		 *	      RE STRUCT		*
@@ -87,6 +86,10 @@ typedef struct re_data
   pcre	       *pcre;			/* the compiled expression */
   pcre_extra   *extra;			/* study result */
 } re_data;
+
+
+static void
+write_re_options(IOSTREAM *s, int re_options);
 
 
 static void
@@ -172,9 +175,23 @@ compare_pcres(atom_t a, atom_t b)
 static int
 write_pcre(IOSTREAM *s, atom_t symbol, int flags)
 { re_data *re = *(re_data**)PL_blob_data(symbol, NULL, NULL);
-
-  Sfprintf(s, "<regex>(%p)", re);	/* TBD: Use pattern? */
-
+  Sfprintf(s, "<regex>(%p: /%s/ [", re, PL_atom_chars(re->pattern));
+  write_re_options(s, re->re_options);
+  /* RE_STUDY isn't preserved; and it's not in PCRE2 */
+  Sfprintf(s, " %s]", cap_type_str(re->capture_type));
+  if ( re->capture_size )
+  { int i;
+    Sfprintf(s, " capture (%d):", re->capture_size);
+    for(i=0; i<re->capture_size+1; i++)
+    { if ( re->capture_names[i].name )
+        Sfprintf(s, " %d:%s:%s", i, PL_atom_chars(re->capture_names[i].name), cap_type_str(re->capture_names[i].type));
+    else
+      Sfprintf(s, " %d:-", i);
+    }
+  } else {
+    Sfprintf(s, " no-capture");
+  }
+  Sfprintf(s, ")");
   return TRUE;
 }
 
@@ -397,6 +414,7 @@ static re_optdef re_optbsrs[] = /* TODO: verify RE_EXEC: */
 
 #define OPTBSR_MASK (PCRE_BSR_ANYCRLF|PCRE_BSR_UNICODE)
 
+
 static re_optdef re_optnewlines[] = /* TODO: verify RE_EXEC: */
 { { "any",	       PCRE_NEWLINE_ANY,      RE_COMP|RE_EXEC },
   { "anycrlf",	       PCRE_NEWLINE_ANYCRLF,  RE_COMP|RE_EXEC },
@@ -407,7 +425,6 @@ static re_optdef re_optnewlines[] = /* TODO: verify RE_EXEC: */
 };
 
 #define OPTNEWLINE_MASK (PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF)
-
 
 static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
 get_arg_1_if_any(term_t head, atom_t *name, size_t *arity, term_t *arg)
@@ -619,18 +636,16 @@ init_capture_map(re_data *re)
 
 	  if ( (fs=strrchr(s, '_')) && fs[1] && !fs[2] )
 	  { len = fs-s;
-
 	    switch(fs[1])
 	    { case 'S': re->capture_names[ci].type = CAP_STRING;  break;
-	      case 'A': re->capture_names[ci].type = CAP_ATOM;    break;
+	      case 'A': re->capture_names[ci].type = CAP_ATOM;	  break;
 	      case 'I': re->capture_names[ci].type = CAP_INTEGER; break;
-	      case 'F': re->capture_names[ci].type = CAP_FLOAT;   break;
+	      case 'F': re->capture_names[ci].type = CAP_FLOAT;	  break;
 	      case 'N': re->capture_names[ci].type = CAP_NUMBER;  break;
-	      case 'T': re->capture_names[ci].type = CAP_TERM;    break;
-	      case 'R': re->capture_names[ci].type = CAP_RANGE;   break;
+	      case 'T': re->capture_names[ci].type = CAP_TERM;	  break;
+	      case 'R': re->capture_names[ci].type = CAP_RANGE;	  break;
 	      default:
 	      { term_t ex;
-
 		return ( (ex=PL_new_term_ref()) &&
 			 PL_put_atom_chars(ex, &fs[1]) &&
 			 PL_existence_error("re_type_flag", ex) );
@@ -664,7 +679,6 @@ typedef struct re_compile_options
 static int /* Parameter to re_get_options() - bool (FALSE/TRUE), as returned by PL_get_...() etc  */
 re_compile_opt(atom_t opt, term_t arg, void *ctx)
 { re_compile_options *copts = ctx;
-
   if ( opt == ATOM_optimise || opt == ATOM_optimize )
   { if ( copts->seen_flags&RE_STUDY )
       return TRUE;
@@ -707,48 +721,47 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
 }
 
 
-/* For debugging (used by re_compile_options_(), re_exec_options_()) */
 static void
-re_options_str(int re_options, char *o_str)
-{
+write_re_options(IOSTREAM *s, int re_options)
+{ const char *sep = "";
   /* The following were extracted from pcre.h and sorted, with bsr and newline at
      the end because they're multi-valued: */
 
-  if ( re_options & PCRE_ANCHORED )	     strcat(o_str, " ANCHORED");
-  if ( re_options & PCRE_AUTO_CALLOUT )	     strcat(o_str, " AUTO_CALLOUT");
-  if ( re_options & PCRE_CASELESS )	     strcat(o_str, " CASELESS");
-  if ( re_options & PCRE_DOLLAR_ENDONLY )    strcat(o_str, " DOLLAR_ENDONLY");
-  if ( re_options & PCRE_DOTALL )	     strcat(o_str, " DOTALL");
-  if ( re_options & PCRE_DUPNAMES )	     strcat(o_str, " DUPNAMES");
-  if ( re_options & PCRE_EXTENDED )	     strcat(o_str, " EXTENDED");
-  if ( re_options & PCRE_EXTRA )	     strcat(o_str, " EXTRA");
-  if ( re_options & PCRE_FIRSTLINE )	     strcat(o_str, " FIRSTLINE");
-  if ( re_options & PCRE_JAVASCRIPT_COMPAT ) strcat(o_str, " JAVASCRIPT_COMPAT");
-  if ( re_options & PCRE_MULTILINE )	     strcat(o_str, " MULTILINE");
-  if ( re_options & PCRE_NEVER_UTF )	     strcat(o_str, " NEVER_UTF"); /* PCRE_DFA_SHORTEST (overlay ) */
+  if ( re_options & PCRE_ANCHORED )	     { Sfprintf(s, "%s%s", sep, "ANCHORED");				 sep = " "; }
+  if ( re_options & PCRE_AUTO_CALLOUT )	     { Sfprintf(s, "%s%s", sep, "AUTO_CALLOUT");			 sep = " "; }
+  if ( re_options & PCRE_CASELESS )	     { Sfprintf(s, "%s%s", sep, "CASELESS");				 sep = " "; }
+  if ( re_options & PCRE_DOLLAR_ENDONLY )    { Sfprintf(s, "%s%s", sep, "DOLLAR_ENDONLY");			 sep = " "; }
+  if ( re_options & PCRE_DOTALL )	     { Sfprintf(s, "%s%s", sep, "DOTALL");				 sep = " "; }
+  if ( re_options & PCRE_DUPNAMES )	     { Sfprintf(s, "%s%s", sep, "DUPNAMES");				 sep = " "; }
+  if ( re_options & PCRE_EXTENDED )	     { Sfprintf(s, "%s%s", sep, "EXTENDED");				 sep = " "; }
+  if ( re_options & PCRE_EXTRA )	     { Sfprintf(s, "%s%s", sep, "EXTRA");				 sep = " "; }
+  if ( re_options & PCRE_FIRSTLINE )	     { Sfprintf(s, "%s%s", sep, "FIRSTLINE");				 sep = " "; }
+  if ( re_options & PCRE_JAVASCRIPT_COMPAT ) { Sfprintf(s, "%s%s", sep, "JAVASCRIPT_COMPAT");			 sep = " "; }
+  if ( re_options & PCRE_MULTILINE )	     { Sfprintf(s, "%s%s", sep, "MULTILINE");				 sep = " "; }
+  if ( re_options & PCRE_NEVER_UTF )	     { Sfprintf(s, "%s%s", sep, "NEVER_UTF");				 sep = " "; } /* PCRE_DFA_SHORTEST (overlay ) */
 
-  if ( re_options & PCRE_NOTBOL )	     strcat(o_str, " NOTBOL");
-  if ( re_options & PCRE_NOTEMPTY )	     strcat(o_str, " NOTEMPTY");
-  if ( re_options & PCRE_NOTEMPTY_ATSTART )  strcat(o_str, " NOTEMPTY_ATSTART");
-  if ( re_options & PCRE_NOTEOL )	     strcat(o_str, " NOTEOL");
-  if ( re_options & PCRE_NO_AUTO_CAPTURE )   strcat(o_str, " NO_AUTO_CAPTURE");
-  if ( re_options & PCRE_NO_AUTO_POSSESS )   strcat(o_str, " NO_AUTO_POSSESS"); /* PCRE_DFA_RESTART (overlay ) */
-  if ( re_options & PCRE_NO_START_OPTIMIZE ) strcat(o_str, " NO_START_OPTIMIZE"); /*  PCRE_NO_START_OPTIMISE (synonym ) */
-  if ( re_options & PCRE_NO_UTF8_CHECK )     strcat(o_str, " NO_UTF8_CHECK"); /* PCRE_NO_UTF16_CHECK, PCRE_NO_UTF32_CHECK (synonym ) */
-  if ( re_options & PCRE_PARTIAL_HARD )	     strcat(o_str, " PARTIAL_HARD");
-  if ( re_options & PCRE_PARTIAL_SOFT )	     strcat(o_str, " PARTIAL_SOFT"); /* PCRE_PARTIAL (synonym ) */
-  if ( re_options & PCRE_UCP )		     strcat(o_str, " UCP");
-  if ( re_options & PCRE_UNGREEDY )	     strcat(o_str, " UNGREEDY");
-  if ( re_options & PCRE_UTF8 )		     strcat(o_str, " UTF8"); /* PCRE_UTF16, PCRE_UTF32 (synonym ) */
+  if ( re_options & PCRE_NOTBOL )	     { Sfprintf(s, "%s%s", sep, "NOTBOL");				 sep = " "; }
+  if ( re_options & PCRE_NOTEMPTY )	     { Sfprintf(s, "%s%s", sep, "NOTEMPTY");				 sep = " "; }
+  if ( re_options & PCRE_NOTEMPTY_ATSTART )  { Sfprintf(s, "%s%s", sep, "NOTEMPTY_ATSTART");			 sep = " "; }
+  if ( re_options & PCRE_NOTEOL )	     { Sfprintf(s, "%s%s", sep, "NOTEOL");				 sep = " "; }
+  if ( re_options & PCRE_NO_AUTO_CAPTURE )   { Sfprintf(s, "%s%s", sep, "NO_AUTO_CAPTURE");			 sep = " "; }
+  if ( re_options & PCRE_NO_AUTO_POSSESS )   { Sfprintf(s, "%s%s", sep, "NO_AUTO_POSSESS");			 sep = " "; } /* PCRE_DFA_RESTART (overlay ) */
+  if ( re_options & PCRE_NO_START_OPTIMIZE ) { Sfprintf(s, "%s%s", sep, "NO_START_OPTIMIZE");			 sep = " "; } /*  PCRE_NO_START_OPTIMISE (synonym ) */
+  if ( re_options & PCRE_NO_UTF8_CHECK )     { Sfprintf(s, "%s%s", sep, "NO_UTF8_CHECK");			 sep = " "; } /* PCRE_NO_UTF16_CHECK, PCRE_NO_UTF32_CHECK (synonym ) */
+  if ( re_options & PCRE_PARTIAL_HARD )	     { Sfprintf(s, "%s%s", sep, "PARTIAL_HARD");			 sep = " "; }
+  if ( re_options & PCRE_PARTIAL_SOFT )	     { Sfprintf(s, "%s%s", sep, "PARTIAL_SOFT");			 sep = " "; } /* PCRE_PARTIAL (synonym ) */
+  if ( re_options & PCRE_UCP )		     { Sfprintf(s, "%s%s", sep, "UCP");					 sep = " "; }
+  if ( re_options & PCRE_UNGREEDY )	     { Sfprintf(s, "%s%s", sep, "UNGREEDY");				 sep = " "; }
+  if ( re_options & PCRE_UTF8 )		     { Sfprintf(s, "%s%s", sep, "UTF8");				 sep = " "; } /* PCRE_UTF16, PCRE_UTF32 (synonym ) */
 
-  if ( (re_options & OPTBSR_MASK)     == PCRE_BSR_ANYCRLF )	  strcat(o_str, " BSR_ANYCRLF");
-  if ( (re_options & OPTBSR_MASK)     == PCRE_BSR_UNICODE )	  strcat(o_str, " BSR_UNICODE");
+  if ( (re_options & OPTBSR_MASK)     == PCRE_BSR_ANYCRLF )	  { Sfprintf(s, "%s%s", sep, "BSR_ANYCRLF");	 sep = " "; }
+  if ( (re_options & OPTBSR_MASK)     == PCRE_BSR_UNICODE )	  { Sfprintf(s, "%s%s", sep, "BSR_UNICODE");	 sep = " "; }
 
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_CR )	  strcat(o_str, " NEWLINE_CR");
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_LF )	  strcat(o_str, " NEWLINE_LF");
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_CRLF )	  strcat(o_str, " NEWLINE_CRLF");
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_ANY )	  strcat(o_str, " NEWLINE_ANY");
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_ANYCRLF )	  strcat(o_str, " NEWLINE_ANYCRLF");
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_CR )	  { Sfprintf(s, "%s%s", sep, "NEWLINE_CR");	 sep = " "; }
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_LF )	  { Sfprintf(s, "%s%s", sep, "NEWLINE_LF");	 sep = " "; }
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_CRLF )	  { Sfprintf(s, "%s%s", sep, "NEWLINE_CRLF");	 sep = " "; }
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_ANY )	  { Sfprintf(s, "%s%s", sep, "NEWLINE_ANY");	 sep = " "; }
+  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_ANYCRLF )	  { Sfprintf(s, "%s%s", sep, "NEWLINE_ANYCRLF"); sep = " "; }
 }
 
 
@@ -759,22 +772,26 @@ re_options_str(int re_options, char *o_str)
 static foreign_t
 re_compile_options_(term_t options, term_t opts_str)
 { int re_options = 0;
-  char o_str[1000] = { '\0', '\0' };
   re_compile_options copts = {0, CAP_STRING, FALSE, FALSE};
 
   if ( !re_get_options(options, RE_COMP, &re_options,
 		       re_compile_opt, &copts) )
     return FALSE;
 
-  re_options_str(re_options, o_str);
-
-  /* And now the stuff that's in copts: */
-  if ( copts.flags & RE_STUDY ) strcat(o_str, " $STUDY");
-  else				strcat(o_str, " $no-study");
-  strcat(o_str, " $");
-  strcat(o_str, cap_type_str(copts.capture_type));
-
-  return PL_unify_string_chars(opts_str, &o_str[1]);
+  { char o_str_buf[1000];
+    char *o_str = o_str_buf;
+    size_t o_str_len = sizeof o_str; IOSTREAM *fd = Sopenmem(&o_str, &o_str_len, "w");
+    write_re_options(fd, re_options);
+    if ( copts.flags & RE_STUDY ) Sfprintf(fd, " %s", "$STUDY");
+    else			  Sfprintf(fd, " %s", "$no-study");
+    Sfprintf(fd, " $%s", cap_type_str(copts.capture_type));
+    Sclose(fd);
+    { int rc = PL_unify_string_chars(opts_str, o_str);
+      if ( o_str != o_str_buf )
+        free(o_str);
+      return rc;
+    }
+  }
 }
 
 
@@ -784,8 +801,7 @@ re_compile_options_(term_t options, term_t opts_str)
 */
 static foreign_t
 re_compile(term_t pat, term_t reb, term_t options)
-{ int flags = CVT_ATOM|CVT_STRING|CVT_LIST;
-  size_t len;
+{ size_t len;
   char *pats;
   int re_options;
   re_compile_options copts = {0, CAP_STRING};
@@ -799,7 +815,7 @@ re_compile(term_t pat, term_t reb, term_t options)
 		       re_compile_opt, &copts) )
     return FALSE;
 
-  if ( PL_get_nchars(pat, &len, &pats, flags|REP_UTF8|CVT_EXCEPTION) )
+  if ( PL_get_nchars(pat, &len, &pats, CVT_ATOM|CVT_STRING|CVT_LIST|REP_UTF8|CVT_EXCEPTION) )
   { re_options |= (PCRE_UTF8|PCRE_NO_UTF8_CHECK);
   } else
     return FALSE;
@@ -837,8 +853,7 @@ re_compile(term_t pat, term_t reb, term_t options)
     } else
     { re->pattern = PL_new_atom_mbchars(REP_UTF8, len, pats);
     }
-
-    return PL_unify_blob(reb, &re, sizeof(re), &pcre_blob);
+    return PL_unify_blob(reb, &re, sizeof re, &pcre_blob);
   } else
   { return PL_syntax_error(re_error_msg, NULL); /* TBD: location, code */
   }
@@ -874,21 +889,24 @@ re_match_opt(atom_t opt, term_t arg, void *ctx)
 static foreign_t
 re_match_options_(term_t options, term_t opts_str)
 { int re_options = 0;
-  char o_str[1000] = { '\0', '\0' };
   matchopts mopts = {0, FALSE};
 
   if ( !re_get_options(options, RE_EXEC, &re_options,
 		       re_match_opt, &mopts) )
     return FALSE;
 
-  re_options_str(re_options, o_str);
-  /* And now the stuff that's in mopts: */
-  { char start_str[100];
-    sprintf(start_str, " $start=%lu", mopts.start);
-    strcat(o_str, start_str);
+  { char o_str_buf[1000];
+    char *o_str = o_str_buf;
+    size_t o_str_len = sizeof o_str; IOSTREAM *fd = Sopenmem(&o_str, &o_str_len, "w");
+    write_re_options(fd, re_options);
+    Sfprintf(fd, " $start=%lu", mopts.start);
+    Sclose(fd);
+    { int rc = PL_unify_string_chars(opts_str, o_str);
+      if ( o_str != o_str_buf )
+        free(o_str);
+      return rc;
+    }
   }
-
-  return PL_unify_string_chars(opts_str, &o_str[1]);
 }
 
 
@@ -1235,6 +1253,7 @@ re_foldl_(term_t regex, term_t on,
 	FUNCTOR_ ## n ## a = PL_new_functor(PL_new_atom(#n), a)
 #define MKATOM(n) \
 	ATOM_ ## n = PL_new_atom(#n)
+
 
 install_t
 install_pcre4pl(void)

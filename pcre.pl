@@ -40,7 +40,6 @@
             re_split/3,		  % +Pattern, +String, -Split:list
             re_split/4,		  % +Pattern, +String, -Split:list, +Options
             re_replace/4,	  % +Pattern, +With, +String, -NewString
-
             re_compile/3,         % +Pattern, -Regex, +Options
             re_flush/0,
             re_config/1           % ?Config
@@ -49,6 +48,15 @@
 :- autoload(library(error),[must_be/2,existence_error/2]).
 :- autoload(library(dcg/basics),[string/3,eos/2,digit/3,digits/3]).
 
+% The foreign language code (pcre4pl.c) defines:
+%    re_config/1,             % ?Config
+%    re_compile/3             % +Pattern, -Regex, +Options
+%    re_match_/3              % +Regex, +String, +Options
+%    re_matchsub_/4           % +Regex, +String, -Sub:dict, +Options
+%    re_fold_/6               % :Goal, +Regex, +String, ?V0, ?V, +Options)
+% plus 2 undocumented predicates for debugging:
+%    '$re_compile_options'/2  % +Options, -String
+%    '$re_match_options'/2    % +Options, -String
 :- use_foreign_library(foreign(pcre4pl)).
 
 :- meta_predicate
