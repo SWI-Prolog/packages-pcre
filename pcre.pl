@@ -271,12 +271,13 @@ re_split(Pattern, String, Split, Options) :-
     arg(2, State, LastSkipStart),
     typed_sub(Type, String, LastSkipStart, _, 0, Last).
 
-range_regex(Pattern/Flags, Compiled, Type) :- !,
+range_regex(Pattern/Flags, Compiled, Type) =>
     atom_chars(Flags, Chars),
     replace_flags(Chars, Chars1, Type),
     atom_chars(RFlags, [r|Chars1]),
     re_compiled(Pattern/RFlags, Compiled).
-range_regex(Pattern, Compiled, string) :-
+range_regex(Pattern, Compiled, Type) =>
+    Type = string,
     re_compiled(Pattern/r, Compiled).
 
 replace_flags([], [], Type) :-
@@ -346,12 +347,14 @@ re_replace(Pattern, With, String, NewString) :-
         parts_to_output(Type, Parts, NewString)
     ).
 
-range_regex(Pattern/Flags, Compiled, All, Type) :- !,
+range_regex(Pattern/Flags, Compiled, All, Type) =>
     atom_chars(Flags, Chars),
     replace_flags(Chars, Chars1, All, Type),
     atom_chars(RFlags, [r|Chars1]),
     re_compiled(Pattern/RFlags, Compiled).
-range_regex(Pattern, Compiled, first, string) :-
+range_regex(Pattern, Compiled, All, Type) =>
+    All = first,
+    Type = string,
     re_compiled(Pattern/r, Compiled).
 
 replace_flags([], [], All, Type) :-
@@ -371,6 +374,9 @@ all(g, all).
 type(a, atom).
 type(s, string).
 
+% TODO: Verify that this code means:
+%       default(Val, Default), var(Val) => Val = Default.
+%       default(_Val, _Default) => true.
 default(Val, Val) :- !.
 default(_, _).
 
