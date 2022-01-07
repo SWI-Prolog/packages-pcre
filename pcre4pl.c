@@ -32,7 +32,7 @@
     POSSIBILITY OF SUCH DAMAGE.
 */
 
-#define O_DEBUG 1
+/* #define O_DEBUG 1 */
 #include <SWI-Stream.h>
 #include <SWI-Prolog.h>
 #include <stdlib.h>
@@ -89,7 +89,7 @@ typedef struct re_data
 
 
 static void
-write_re_options(IOSTREAM *s, int re_options);
+write_re_options(IOSTREAM *s, const char* sep, int re_options);
 
 
 static void
@@ -175,23 +175,7 @@ compare_pcres(atom_t a, atom_t b)
 static int
 write_pcre(IOSTREAM *s, atom_t symbol, int flags)
 { re_data *re = *(re_data**)PL_blob_data(symbol, NULL, NULL);
-  Sfprintf(s, "<regex>(%p: /%s/ [", re, PL_atom_chars(re->pattern));
-  write_re_options(s, re->re_options);
-  /* RE_STUDY isn't preserved; and it's not in PCRE2 */
-  Sfprintf(s, " %s]", cap_type_str(re->capture_type));
-  if ( re->capture_size )
-  { int i;
-    Sfprintf(s, " capture (%d):", re->capture_size);
-    for(i=0; i<re->capture_size+1; i++)
-    { if ( re->capture_names[i].name )
-        Sfprintf(s, " %d:%s:%s", i, PL_atom_chars(re->capture_names[i].name), cap_type_str(re->capture_names[i].type));
-    else
-      Sfprintf(s, " %d:-", i);
-    }
-  } else {
-    Sfprintf(s, " no-capture");
-  }
-  Sfprintf(s, ")");
+  Sfprintf(s, "<regex>(%p)", re);	/* For details of the blob: re_portray() - '$re_portray'/2 */
   return TRUE;
 }
 
@@ -309,7 +293,7 @@ get_re(term_t t, re_data **re)
 }
 
 
-#define RE_STUDY	0x0001
+#define RE_STUDY 0x0001
 
 static int /* FALSE/TRUE or -1 for error */
 effective_bool(term_t arg)
@@ -357,7 +341,7 @@ typedef struct re_optdef
 
 #define RE_COMP 0x001
 #define RE_EXEC 0x002
-#define RE_NEG	0x004
+#define RE_NEG  0x004
 
 
 static const re_optdef*
@@ -722,8 +706,8 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
 
 
 static void
-write_re_options(IOSTREAM *s, int re_options)
-{ const char *sep = "";
+write_re_options(IOSTREAM *s, const char *sep, int re_options)
+{ 
   /* The following were extracted from pcre.h and sorted, with bsr and newline at
      the end because they're multi-valued: */
 
@@ -765,33 +749,44 @@ write_re_options(IOSTREAM *s, int re_options)
 }
 
 
-/** '$re_compile_options'(+Options, -OptsStr) is det.
+/** '$re_portray'(+Stream, +Regex) is det.
 
-    For debugging - process the Options into a string
+    Output a debug string for the regexp (from re_compile)
+    ('$re_match_options'/2 handles the match options)
 */
 static foreign_t
-re_compile_options_(term_t options, term_t opts_str)
-{ int re_options = 0;
-  re_compile_options copts = {0, CAP_STRING, FALSE, FALSE};
-
-  if ( !re_get_options(options, RE_COMP, &re_options,
-		       re_compile_opt, &copts) )
+re_portray(term_t stream, term_t regex)
+{ IOSTREAM *fd;
+  re_data *re;
+  if ( !PL_get_stream(stream, &fd, SIO_OUTPUT) || !PL_acquire_stream(fd) )
     return FALSE;
-
-  { char o_str_buf[1000];
-    char *o_str = o_str_buf;
-    size_t o_str_len = sizeof o_str; IOSTREAM *fd = Sopenmem(&o_str, &o_str_len, "w");
-    write_re_options(fd, re_options);
-    if ( copts.flags & RE_STUDY ) Sfprintf(fd, " %s", "$STUDY");
-    else			  Sfprintf(fd, " %s", "$no-study");
-    Sfprintf(fd, " $%s", cap_type_str(copts.capture_type));
-    Sclose(fd);
-    { int rc = PL_unify_string_chars(opts_str, o_str);
-      if ( o_str != o_str_buf )
-        free(o_str);
-      return rc;
+  if ( !get_re(regex, &re) )
+    return FALSE;
+  Sfprintf(fd, "<regex>(/%s/ [", PL_atom_chars(re->pattern));
+  write_re_options(fd, "", re->re_options);
+  /* TODO: compile_opts&RE_STUDY is in a flag that's not in re_data */
+  /* TODO: match_opts.start is in a flag that's not in re_data */
+  Sfprintf(fd, " %s]", cap_type_str(re->capture_type));
+  if ( re->capture_size )
+  { int i;
+    const char *sep = "";
+    Sfprintf(fd, " capture(%d){", re->capture_size);
+    for(i=0; i<re->capture_size+1; i++)
+    { if ( re->capture_names[i].name )
+      { Sfprintf(fd, "%s%d:%s:%s}", sep, i, PL_atom_chars(re->capture_names[i].name), cap_type_str(re->capture_names[i].type));
+	sep = " ";
+      }
+      else
+      { Sfprintf(fd, "%s%d:-", sep, i);
+	sep = " ";
+      }
     }
+  } else {
+    /* Sfprintf(fd, " no-capture"); */
   }
+  Sfprintf(fd, ")");
+
+  return PL_release_stream(fd);
 }
 
 
@@ -882,31 +877,53 @@ re_match_opt(atom_t opt, term_t arg, void *ctx)
 }
 
 
-/** '$re_match_options'(+Options, -OptsStr) is det.
+/* This function probably isn't needed -- it's just in case the re_options have
+   somehow incorporated the compile options. */
+static void
+re_match_opt_postprocess(int *re_options)
+{ /* We must *not* "or" the options from regex with the
+     match options -- see the pcre_exec() documentation.
+       "The only bits that may be set are
+	   PCRE_ANCHORED,
+	   PCRE_NEWLINE_xxx,
+	   PCRE_NOTBOL,
+	   PCRE_NOTEOL,
+	   PCRE_NOTEMPTY,
+	   PCRE_NOTEMPTY_ATSTART,
+	   PCRE_NO_START_OPTIMIZE,
+	   PCRE_NO_UTF8_CHECK,
+	   PCRE_PARTIAL_HARD,
+	   and PCRE_PARTIAL_SOFT."
+  */
+  *re_options &= (PCRE_ANCHORED|PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|
+                  PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF|
+                  PCRE_NOTBOL|PCRE_NOTEOL|PCRE_NOTEMPTY| PCRE_NOTEMPTY_ATSTART|
+                  PCRE_NO_START_OPTIMIZE|PCRE_NO_UTF8_CHECK|PCRE_PARTIAL_HARD|
+                  PCRE_PARTIAL_SOFT);
+}
 
-    For debugging - process the Options into a string
+
+/** '$re_match_options'(+Stream, +Options) is det.
+
+    Output the Options as a debug string.
+    ('$re_portray'/2 handles the compile options)
 */
 static foreign_t
-re_match_options_(term_t options, term_t opts_str)
-{ int re_options = 0;
+re_portray_match_options_(term_t stream, term_t options)
+{ IOSTREAM *fd;
+  int re_options = 0;
   matchopts mopts = {0, FALSE};
+  if ( !PL_get_stream(stream, &fd, SIO_OUTPUT) || !PL_acquire_stream(fd) )
+    return FALSE;
 
   if ( !re_get_options(options, RE_EXEC, &re_options,
 		       re_match_opt, &mopts) )
     return FALSE;
+  re_match_opt_postprocess(&re_options);
 
-  { char o_str_buf[1000];
-    char *o_str = o_str_buf;
-    size_t o_str_len = sizeof o_str; IOSTREAM *fd = Sopenmem(&o_str, &o_str_len, "w");
-    write_re_options(fd, re_options);
-    Sfprintf(fd, " $start=%lu", mopts.start);
-    Sclose(fd);
-    { int rc = PL_unify_string_chars(opts_str, o_str);
-      if ( o_str != o_str_buf )
-        free(o_str);
-      return rc;
-    }
-  }
+  write_re_options(fd, "", re_options);
+  Sfprintf(fd, " $start=%lu", mopts.start);
+  return PL_release_stream(fd);
 }
 
 
@@ -1104,6 +1121,7 @@ re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
 
   if ( !re_get_options(options, RE_EXEC, &re_options, re_match_opt, &opts) )
     return FALSE;
+  re_match_opt_postprocess(&re_options);
 
   if ( get_re(regex, &re) &&
        re_get_subject(on, &subject, flags) )
@@ -1124,6 +1142,25 @@ re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
       }
     }
 
+    /* Note that we must *not* "or" the options from regex with the
+       match options -- see the pcre_exec() documentation.
+       "The only bits that may be set are
+	   PCRE_ANCHORED,
+	   PCRE_NEWLINE_xxx,
+	   PCRE_NOTBOL,
+	   PCRE_NOTEOL,
+	   PCRE_NOTEMPTY,
+	   PCRE_NOTEMPTY_ATSTART,
+	   PCRE_NO_START_OPTIMIZE,
+	   PCRE_NO_UTF8_CHECK,
+	   PCRE_PARTIAL_HARD,
+	   and PCRE_PARTIAL_SOFT."
+    */
+    re_options &= (PCRE_ANCHORED|PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|
+                   PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF|
+                   PCRE_NOTBOL|PCRE_NOTEOL|PCRE_NOTEMPTY| PCRE_NOTEMPTY_ATSTART|
+                   PCRE_NO_START_OPTIMIZE|PCRE_NO_UTF8_CHECK|PCRE_PARTIAL_HARD|
+                   PCRE_PARTIAL_SOFT);
     { int re_rc = pcre_exec(re->pcre, re->extra,
 			    subject.subject, subject.length,
 			    opts.start, re_options,
@@ -1178,6 +1215,7 @@ re_foldl_(term_t regex, term_t on,
 
   if ( !re_get_options(options, RE_EXEC, &re_options, re_match_opt, &opts) )
     return FALSE;
+  re_match_opt_postprocess(&re_options);
 
   if ( get_re(regex, &re) &&
        re_get_subject(on, &subject, BUF_STACK) )
@@ -1285,6 +1323,6 @@ install_pcre4pl(void)
   PL_register_foreign("re_match_",    3, re_match_,    0);
   PL_register_foreign("re_matchsub_", 4, re_matchsub_, 0);
   PL_register_foreign("re_foldl_",    6, re_foldl_,    0);
-  PL_register_foreign("$re_compile_options", 2, re_compile_options_, 0);
-  PL_register_foreign("$re_match_options", 2, re_match_options_, 0);
+  PL_register_foreign("$re_portray",  2, re_portray, 0);
+  PL_register_foreign("$re_portray_match_options", 2, re_portray_match_options_, 0);
 }

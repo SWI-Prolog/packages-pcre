@@ -33,8 +33,8 @@
 */
 
 :- module(test_pcre,
-          [ test_pcre/0
-          ]).
+	  [ test_pcre/0
+	  ]).
 
 :- encoding(utf8).
 
@@ -47,7 +47,7 @@
 
 test_pcre :-
     run_tests([ pcre
-              ]).
+	      ]).
 
 :- begin_tests(pcre).
 
@@ -75,26 +75,29 @@ test(fold, Words == ["aap", "noot", "mies"]) :-
     re_foldl(add_match, "[a-z]+", "aap noot mies", Words, [], []).
 test(fold2, Words == [re_match{0:"aap"},re_match{0:"noot"},re_match{0:"mies"}]) :-
     re_foldl(add_match2, "[a-z]+", "  aap    noot mies ", Words, [], []).
-test(named, Sub == re_match{0:"2017-04-20",
-                            date:"2017-04-20",
-                            day:"20",month:"04",year:"2017"}) :-
+test(named, [Sub, RegexStr] ==
+	    [re_match{0:"2017-04-20",
+		      date:"2017-04-20",
+		      day:"20",month:"04",year:"2017"},
+	     "<regex>(/(?<date> (?<year>(?:\\d\\d)?\\d\\d) -\n\t\t(?<month>\\d\\d) - (?<day>\\d\\d) )/ [EXTENDED NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] capture(4){0:- 1:date:CAP_STRING} 2:year:CAP_STRING} 3:month:CAP_STRING} 4:day:CAP_STRING})"]) :-
     re_compile("(?<date> (?<year>(?:\\d\\d)?\\d\\d) -
-                (?<month>\\d\\d) - (?<day>\\d\\d) )", Re,
-               [extended]),
-    re_matchsub(Re, "2017-04-20", Sub, []).
+		(?<month>\\d\\d) - (?<day>\\d\\d) )", Re,
+	       [extended]),
+    re_matchsub(Re, "2017-04-20", Sub, []),
+    pcre:'$re_portray_string'(Re, RegexStr).
 test(typed, Sub == re_match{0:"2017-04-20",
-                            date:"2017-04-20",
-                            day:20,month:4,year:2017}) :-
+			    date:"2017-04-20",
+			    day:20,month:4,year:2017}) :-
     re_matchsub("(?<date> (?<year_I>(?:\\d\\d)?\\d\\d) -
-                 (?<month_I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
-                "2017-04-20", Sub, []).
+		 (?<month_I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
+		"2017-04-20", Sub, []).
 test(typed2, Sub == re_match{0:"2017-04-20",
-                            date:"2017-04-20",
-                            day:20,month_:4,year_x:2017}) :-
+			    date:"2017-04-20",
+			    day:20,month_:4,year_x:2017}) :-
     % Names with more than one "_", for testing type suffix
     re_matchsub("(?<date> (?<year_x_I>(?:\\d\\d)?\\d\\d) -
-                 (?<month__I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
-                "2017-04-20", Sub, []).
+		 (?<month__I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
+		"2017-04-20", Sub, []).
 test(range, Sub == re_match{0:"Name: value", value:6-5}) :-
     re_matchsub(".*:\\s(?<value_R>.*)"/x, "Name: value", Sub, []).
 test(capture_string, Subs == re_match{0:"abc", 1:"a", 2:"b", 3:"c"}) :-
@@ -122,17 +125,17 @@ test(replace_unicode1,
      [condition(re_config(utf8(true))),
       true(NewString == "網目錦蛇 [reticulated python へび]")]) :-
     re_replace('àmímé níshíkíhéꜜbì', "reticulated python へび",
-               '網目錦蛇 [àmímé níshíkíhéꜜbì]', NewString).
+	       '網目錦蛇 [àmímé níshíkíhéꜜbì]', NewString).
 test(replace_unicode2,
      [condition(re_config(utf8(true))),
       true(NewString == "網目錦へび [àmímé níshíkíhéꜜbì]")]) :-
     re_replace('(a蛇é)+', "へび",
-               '網目錦a蛇éa蛇éa蛇éa蛇é [àmímé níshíkíhéꜜbì]', NewString).
+	       '網目錦a蛇éa蛇éa蛇éa蛇é [àmímé níshíkíhéꜜbì]', NewString).
 test(replace_unicode3,
      [condition(re_config(utf8(true))),
       true(NewString == "網目へび [àmímé níshíkíhéꜜbì]")]) :-
     re_replace("[蛇錦]+", "へび",
-               "網目錦蛇 [àmímé níshíkíhéꜜbì]", NewString).
+	       "網目錦蛇 [àmímé níshíkíhéꜜbì]", NewString).
 
 test(config_not_compound1, error(type_error(compound,version(A,B)),_)) :-
     re_config(version(A,B)).
@@ -155,8 +158,8 @@ test(config_version_type, fail) :-
     atom_string(V, Vstr),
     re_config(version(Vstr)).
 test(config_version_value, [setup((re_config(version(V)),
-                                   atomic_concat(V, ' ', V2))),
-                            fail]) :-
+				   atomic_concat(V, ' ', V2))),
+			    fail]) :-
     re_config(version(V2)).
 test(config_utf8) :-
     re_config(utf8(V)),
@@ -199,106 +202,124 @@ test(config_stackrecurse) :-
     re_config(stackrecurse(V)),
     must_be(boolean, V).
 
-test(compile_config_0, OptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $no-study $CAP_STRING") :-
-    pcre:'$re_compile_options'([], OptsStr).
+test(compile_config_0,
+     RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING])") :-
+    re_compile(".", Regex, []),
+    pcre:'$re_portray_string'(Regex, RegexStr).
 
 test(compile_config_1,
-     OptsStr == "ANCHORED CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED EXTRA FIRSTLINE JAVASCRIPT_COMPAT MULTILINE NO_AUTO_CAPTURE NO_UTF8_CHECK UCP UNGREEDY BSR_ANYCRLF NEWLINE_CRLF $STUDY $CAP_RANGE") :-
-    pcre:'$re_compile_options'([anchored(true),
-                                auto_capture(false),
-                                caseless(true),
-                                dollar_endonly(true),
-                                dotall(true),
-                                dupnames(true),
-                                extended(true),
-                                extra(true),
-                                firstline(true),
-                                greedy(false),
-                                compat(javascript),
-                                multiline(true),
-                                ucp(true),
-                                optimize(true),
-                                capture_type(range),
-                                bsr(anycrlf),
-                                newline(crlf)
-                               ],
-                               OptsStr).
-% The documentation says that behavior is unspecified if an option is
-% given multiple times; the current code keeps the last value
+     RegexStr == "<regex>(/./ [ANCHORED CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED EXTRA FIRSTLINE JAVASCRIPT_COMPAT MULTILINE NO_AUTO_CAPTURE NO_UTF8_CHECK UCP UNGREEDY UTF8 BSR_ANYCRLF NEWLINE_CRLF CAP_RANGE])") :-
+    re_compile('.',  Regex,
+	       [anchored(true),
+		auto_capture(false),
+		caseless(true),
+		dollar_endonly(true),
+		dotall(true),
+		dupnames(true),
+		extended(true),
+		extra(true),
+		firstline(true),
+		greedy(false),
+		compat(javascript),
+		multiline(true),
+		ucp(true),
+		optimize(true),
+		capture_type(range),
+		bsr(anycrlf),
+		newline(crlf)
+	       ]),
+    pcre:'$re_portray_string'(Regex, RegexStr).
+
 test(compile_config_1_inverse,
-     OptsStr == "JAVASCRIPT_COMPAT NO_UTF8_CHECK BSR_UNICODE NEWLINE_CR $no-study $CAP_RANGE") :-
-    pcre:'$re_compile_options'([
-                                anchored(false),
-                                auto_capture(true),
-                                caseless(false),
-                                dollar_endonly(false),
-                                dotall(false),
-                                dupnames(false),
-                                extended(false),
-                                extra(false),
-                                firstline(false),
-                                greedy(true),
-                                compat(javascript), % duplicated
-                                multiline(false),
-                                ucp(false),
-                                bol(false),
-                                eol(false),
-                                empty(false),
-                                empty_atstart(false),
-                                optimize(false),
-                                capture_type(range),
-                                bsr(unicode),
-                                newline(cr),
-                                % Invert them (they'll be ignored):
-                                anchored(true),
-                                caseless(true),
-                                dollar_endonly(true),
-                                dotall(true),
-                                dupnames(true),
-                                extended(true),
-                                extra(true),
-                                firstline(true),
-                                greedy(false),
-                                compat(ignored),
-                                multiline(true),
-                                auto_capture(false),
-                                ucp(true),
-                                bol(true),
-                                eol(true),
-                                empty(true),
-                                empty_atstart(true),
-                                optimize(true),
-                                capture_type(string),
-                                bsr(anycrlf),
-                                newline(lf)
-                               ],
-                               OptsStr).
+     RegexStr == "<regex>(/./ [JAVASCRIPT_COMPAT NO_UTF8_CHECK UTF8 BSR_UNICODE NEWLINE_CR CAP_RANGE])") :-
+    re_compile('.', Regex,
+	       [anchored(false),
+		auto_capture(true),
+		caseless(false),
+		dollar_endonly(false),
+		dotall(false),
+		dupnames(false),
+		extended(false),
+		extra(false),
+		firstline(false),
+		greedy(true),
+		compat(javascript), % duplicated
+		multiline(false),
+		ucp(false),
+		bol(false),
+		eol(false),
+		empty(false),
+		empty_atstart(false),
+		optimize(false),
+		capture_type(range),
+		bsr(unicode),
+		newline(cr),
+		% Invert them (they'll be ignored):
+		anchored(true),
+		caseless(true),
+		dollar_endonly(true),
+		dotall(true),
+		dupnames(true),
+		extended(true),
+		extra(true),
+		firstline(true),
+		greedy(false),
+		compat(ignored),
+		multiline(true),
+		auto_capture(false),
+		ucp(true),
+		bol(true),
+		eol(true),
+		empty(true),
+		empty_atstart(true),
+		optimize(true),
+		capture_type(string),
+		bsr(anycrlf),
+		newline(lf)
+	       ]),
+    pcre:'$re_portray_string'(Regex, RegexStr).
+
 test(compile_config_2,
-     OptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $no-study $CAP_STRING") :-
-    pcre:'$re_compile_options'([optimize(false)],
-                               OptsStr).
+     RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_ATOM])") :-
+    re_compile('.', Regex, [multiline(false),caseless(false),capture_type(atom),foo]),
+    pcre:'$re_portray_string'(Regex, RegexStr).
+
 test(compile_config_3,
-     OptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $no-study $CAP_ATOM") :-
-    pcre:'$re_compile_options'([multiline(false),caseless(false),capture_type(atom),foo],
-                               OptsStr).
-test(compile_config_4,
-     OptsStr == "CASELESS MULTILINE NO_UTF8_CHECK NEWLINE_LF $no-study $CAP_TERM") :-
-    pcre:'$re_compile_options'([qqsv,zot(123),optimise(false),capture_type(term),multiline(true),caseless(true),newline(lf)],
-                               OptsStr).
-test(compile_config_5, error(type_error(option, newline(qqsv)), _)) :-
-    pcre:'$re_compile_options'([newline(qqsv)], _OptsStr).
+     RegexStr == "<regex>(/./ [CASELESS MULTILINE NO_UTF8_CHECK UTF8 NEWLINE_LF CAP_TERM])") :-
+    re_compile('.', Regex, [qqsv,zot(123),optimise(false),capture_type(term),multiline(true),caseless(true),newline(lf)]),
+    pcre:'$re_portray_string'(Regex, RegexStr).
+
+test(compile_config_4, error(type_error(option, newline(qqsv)), _)) :-
+    re_compile('.', _Regex, [newline(qqsv)]).
+
 test(compile_exec_1,
-     OptsStr == "ANCHORED NOTBOL NOTEMPTY NOTEMPTY_ATSTART NOTEOL NO_UTF8_CHECK NEWLINE_ANYCRLF $start=666") :-
-    pcre:'$re_match_options'([anchored(true),bol(false),eol(false),empty(false),empty_atstart(false),start(666)],
-                             OptsStr).
+     [RegexStr,  MatchOptsStr, Sub, Sub2] ==
+     ["<regex>(/./ [ANCHORED NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING])",
+      "NOTBOL NOTEMPTY NOTEMPTY_ATSTART NOTEOL NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0",
+      re_match{0:"a"},
+      re_match{0:"b"}]) :-
+    re_compile('.', Regex, [anchored(true),bol(false),eol(false),empty(false),empty_atstart(false),start(666)]), % start(666) is ignored
+    MatchOpts = [anchored(false),bol(false),eol(false),empty(false),empty_atstart(false),start(0)], % anchored(false) overrides
+    pcre:'$re_portray_match_options_string'(MatchOpts, MatchOptsStr),
+    re_matchsub(Regex, "abc", Sub, MatchOpts),
+    pcre:'$re_portray_string'(Regex, RegexStr),
+    re_matchsub(Regex, "abc", Sub2, [start(1)|MatchOpts]).
+
 test(compile_exec_2,
-     OptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0") :-
-    pcre:'$re_match_options'([anchored(false),bol(true),eol(true),empty(true),empty_atstart(true)],
-                             OptsStr).
+     MatchOptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0") :-
+    pcre:'$re_portray_match_options_string'([anchored(false),bol(true),eol(true),empty(true),empty_atstart(true)],
+					    MatchOptsStr).
+
 test(compile_exec_3,
-     OptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0") :-
-    pcre:'$re_match_options'([],
-                             OptsStr).
+     MatchOptionsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0") :-
+    pcre:'$re_portray_match_options_string'([], MatchOptionsStr).
+
+test(match_ok_start, Sub==re_match{0:"c"}) :-
+    re_matchsub('.', "abc", Sub, [start(2)]).
+test(match_bad_start1, error(domain_error(offset,-1),_)) :- % TODO: -1 vs 3
+    re_matchsub('.', "abc", _Sub, [start(3)]).
+test(match_bad_start2, error(type_error(option,start=3),_)) :-
+    re_matchsub('.', "abc", _Sub, [start=3]).
 
 :- end_tests(pcre).
 

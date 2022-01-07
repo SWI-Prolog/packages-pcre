@@ -54,9 +54,10 @@
 %    re_match_/3              % +Regex, +String, +Options
 %    re_matchsub_/4           % +Regex, +String, -Sub:dict, +Options
 %    re_fold_/6               % :Goal, +Regex, +String, ?V0, ?V, +Options)
-% plus 2 undocumented predicates for debugging:
-%    '$re_compile_options'/2  % +Options, -String
-%    '$re_match_options'/2    % +Options, -String
+%   undocumented predicates for debugging and unit tests, with
+%   related wrapper predicates:
+%    '$re_portray'/2               % +Stream, +Regex
+%    '$re_portray_match_options'/2 % +Stream, +Options
 :- use_foreign_library(foreign(pcre4pl)).
 
 :- meta_predicate
@@ -639,3 +640,31 @@ re_flush :-
 %   @error `instantiation_error` if =Term= is a variable.
 %
 %   @see `man pcreapi` for details
+
+
+%!  '$re_portray'(+Stream, +Regex) is det.
+%
+%  Output debug info on Stream.
+
+'$re_portray'(Regex) :-
+    '$re_portray'(current_output, Regex).
+
+'$re_portray_string'(Regex, String) :-
+    with_output_to(string(String),
+                   '$re_portray'(current_output, Regex)).
+
+'$re_portray_atom'(Regex, Atom) :-
+    with_output_to(atom(Atom),
+                   '$re_portray'(current_output, Regex)).
+
+%!  '$re_portray_match_options'(+Stream, +Options) is det.
+%
+% Output debug info on Stream.
+
+'$re_portray_match_options_string'(Options, String) :-
+    with_output_to(string(String),
+                   '$re_portray_match_options'(current_output, Options)).
+
+'$re_portray_match_options_atom'(Options, Atom) :-
+    with_output_to(atom(Atom),
+                   '$re_portray_match_options'(current_output, Options)).
