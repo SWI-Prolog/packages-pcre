@@ -49,165 +49,202 @@ test_pcre :-
     run_tests([ pcre
 	      ]).
 
-:- begin_tests(pcre).
+% TODO: make this part of plunit?
+%       see https://swi-prolog.discourse.group/t/plunit-and-individual-test-setup-cleanup/4853
+term_expansion((re_test(Name) :- Body),
+                  (test(Name, Options2) :- Body)) :-
+    expand_options([], Options2).
+term_expansion((re_test(Name, Options) :- Body),
+                  (test(Name, Options2) :- Body)) :-
+    expand_options(Options, Options2).
+:- det(exand_options/2).
+expand_options([], Options2) =>
+    Options2 = [setup(re_flush)].
+expand_options([O1|O2], Options2) =>
+    % assertion(\+ memberchk(setup(_), [O1|O2])) doesn't work as expected
+    (   memberchk(setup(_), [O1|O2])
+    ->  throw(error(setup_conflict([O1|O2]), _))
+    ;   true
+    ),
+    Options2 = [setup(re_flush),O1|O2].
+expand_options(Option, Options2) => % e.g.: re_test(t123, X==[1,2,3]) :- pred(123, X).
+    expand_options([Option], Options2).
 
-test(match1, Sub == re_match{0:"aap"}) :-
+:- begin_tests(pcre, [cleanup(test_report(fixme)), setup(re_flush)]).
+
+re_test(match1, [Sub == re_match{0:"aap"}]) :-
     re_compile("a+p", Re, []),
     re_matchsub(Re, "aapenootjes", Sub, []).
-test(match1a, Sub == re_match{1:"aap", 2:"aaaaaaap", 0:"aapenootjes  aaaaaaap"}) :-
+re_test(match1a, Sub == re_match{1:"aap", 2:"aaaaaaap", 0:"aapenootjes  aaaaaaap"}) :-
     re_matchsub("(a+?p).*?(a+?p)", "meer aapenootjes  aaaaaaapenootjes", Sub, []).
-test(match1b, fail) :-
+re_test(match1b, fail) :-
     re_compile("a+p", Re, [anchored(true)]),
     re_matchsub(Re, "---aapenootjes", _Sub, []).
-test(match1c, Sub == re_match{0:"AAP"}) :-
+re_test(match1c, Sub == re_match{0:"AAP"}) :-
     re_compile("a+p", Re, [anchored(false), caseless(true)]),
     re_matchsub(Re, "---AAPenootjes", Sub, []).
 
-test(compile_option1) :-
+re_test(compile_option1) :-
     re_compile("a+b", _Re, [compat(javascript)]).
-test(compile_option2, error(domain_error(compat_option, qqsv), _)) :-
+re_test(compile_option2, error(domain_error(compat_option, qqsv), _)) :-
     re_compile("a+b", _Re, [compat(qqsv)]).
 
-test(start, Sub == re_match{0:"es"}) :-
+re_test(start, Sub == re_match{0:"es"}) :-
     re_compile("e.", Re, []),
     re_matchsub(Re, "aapenootjes", Sub, [start(4)]).
-test(fold, Words == ["aap", "noot", "mies"]) :-
+re_test(fold, Words == ["aap", "noot", "mies"]) :-
     re_foldl(add_match, "[a-z]+", "aap noot mies", Words, [], []).
-test(fold2, Words == [re_match{0:"aap"},re_match{0:"noot"},re_match{0:"mies"}]) :-
+re_test(fold2, Words == [re_match{0:"aap"},re_match{0:"noot"},re_match{0:"mies"}]) :-
     re_foldl(add_match2, "[a-z]+", "  aap    noot mies ", Words, [], []).
-test(named, [Sub, RegexStr] ==
-	    [re_match{0:"2017-04-20",
-		      date:"2017-04-20",
-		      day:"20",month:"04",year:"2017"},
-	     "<regex>(/(?<date> (?<year>(?:\\d\\d)?\\d\\d) -\n\t\t(?<month>\\d\\d) - (?<day>\\d\\d) )/ [EXTENDED NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] capture(4){0:- 1:date:CAP_STRING} 2:year:CAP_STRING} 3:month:CAP_STRING} 4:day:CAP_STRING})"]) :-
+re_test(named, [Sub, RegexStr] ==
+	       [re_match{0:"2017-04-20",
+			 date:"2017-04-20",
+			 day:"20",month:"04",year:"2017"},
+		"<regex>(/(?<date> (?<year>(?:\\d\\d)?\\d\\d) -\n\t\t(?<month>\\d\\d) - (?<day>\\d\\d) )/ [EXTENDED NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] capture(4){0:- 1:date:CAP_STRING} 2:year:CAP_STRING} 3:month:CAP_STRING} 4:day:CAP_STRING})"]) :-
     re_compile("(?<date> (?<year>(?:\\d\\d)?\\d\\d) -
 		(?<month>\\d\\d) - (?<day>\\d\\d) )", Re,
 	       [extended]),
     re_matchsub(Re, "2017-04-20", Sub, []),
     pcre:'$re_portray_string'(Re, RegexStr).
-test(typed, Sub == re_match{0:"2017-04-20",
-			    date:"2017-04-20",
-			    day:20,month:4,year:2017}) :-
+re_test(typed, Sub == re_match{0:"2017-04-20",
+			       date:"2017-04-20",
+			       day:20,month:4,year:2017}) :-
     re_matchsub("(?<date> (?<year_I>(?:\\d\\d)?\\d\\d) -
 		 (?<month_I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
 		"2017-04-20", Sub, []).
-test(typed2, Sub == re_match{0:"2017-04-20",
-			    date:"2017-04-20",
-			    day:20,month_:4,year_x:2017}) :-
+re_test(typed2, Sub == re_match{0:"2017-04-20",
+				date:"2017-04-20",
+				day:20,month_:4,year_x:2017}) :-
     % Names with more than one "_", for testing type suffix
     re_matchsub("(?<date> (?<year_x_I>(?:\\d\\d)?\\d\\d) -
 		 (?<month__I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
 		"2017-04-20", Sub, []).
-test(range, Sub == re_match{0:"Name: value", value:6-5}) :-
+re_test(range, Sub == re_match{0:"Name: value", value:6-5}) :-
     re_matchsub(".*:\\s(?<value_R>.*)"/x, "Name: value", Sub, []).
-test(capture_string, Subs == re_match{0:"abc", 1:"a", 2:"b", 3:"c"}) :-
+re_test(capture_string1a, Subs == re_match{0:"abc", 1:"a", 2:"b", 3:"c"}) :-
     re_matchsub('(a)(b)(c)', 'xabc', Subs, [capture_type(string)]).
-test(capture_atom, [true(Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'}), fixme(global_capture_type)]) :-
+re_test(capture_string1b, Subs == re_match{0:"abc", 1:"a", 2:"b", 3:"c"}) :-
+    re_compile('(a)(b)(c)', Re, [capture_type(string)]),
+    re_matchsub(Re, 'xabc', Subs, []).
+re_test(capture_atom1a, [true(Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'}), fixme(global_capture_type)]) :-
     re_matchsub('(a)(b)(c)', 'xabc', Subs, [capture_type(atom)]).
-test(capture_range, [true(Subs == re_match{0:'abc', 1:0-1, 2:1-1, 3:2-1}), fixme(global_capture_type)]) :-
-    re_matchsub('(a+)(b+)(c+)', 'xabc', Subs, [extended(true), capture_type(range)]).
-test(capture_atom2, [true(Subs == re_match{0:"Name: value", value:'value'}), fixme(global_capture_type)]) :-
+re_test(capture_atom1b, [true(Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'})]) :-
+    re_compile('(a)(b)(c)', Re, [capture_type(atom)]),
+    re_matchsub(Re, 'xabc', Subs, [capture_type(atom)]).
+re_test(capture_atom1c, [true(Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'})]) :-
+    re_compile('(a)(b)(c)', Re, [capture_type(atom)]),
+    re_matchsub(Re, 'xabc', Subs, []).
+re_test(capture_range, [true(Subs == re_match{0:0-3, 1:0-1, 2:1-1, 3:2-1}), fixme(global_capture_type)]) :-
+    re_matchsub('(a+)(b+)(c+)', 'xabc', Subs, [capture_type(range)]).
+re_test(capture_range2, [true(Subs == re_match{0:0-3, 1:0-1, 2:1-1, 3:2-1}), fixme(issue_8)]) :-
+    re_compile('(a+)(b+)(c+)', Re, [capture_type(range)]),
+    re_matchsub(Re, 'xabc', Subs, []).
+re_test(capture_atom2, [true(Subs == re_match{0:"Name: value", value:'value'}), fixme(global_capture_type)]) :-
     re_matchsub(".*:\\s(?<value>.*)", "Name: value", Subs, [extended(true), capture_type(atom)]).
-test(split, Split == ["","a","b","aa","c"]) :-
+re_test(split, Split == ["","a","b","aa","c"]) :-
     re_split("a+", "abaac", Split, []).
-test(replace, NewString == "Abaac") :-
+re_test(replace, NewString == "Abaac") :-
     re_replace("a+", "A", "abaac", NewString).
-test(replace, NewString == "A1ba2a3c") :-
+re_test(replace, NewString == "A1ba2a3c") :-
     re_replace("a(\\d)", "A\\1", "a1ba2a3c", NewString).
-test(replace_all, NewString == "AbAc") :-
+re_test(replace_all, NewString == "AbAc") :-
     re_replace("a+"/g, "A", "abaac", NewString).
-test(replace_all, NewString == "A1bA2A3c") :-
+re_test(replace_all, NewString == "A1bA2A3c") :-
     re_replace("a(\\d)"/g, "A\\1", "a1ba2a3c", NewString).
-test(replace_none, NewString == "a1ba2a3c") :-
+re_test(replace_none, NewString == "a1ba2a3c") :-
     re_replace("x(\\d)"/g, "A\\1", "a1ba2a3c", NewString).
 
-test(replace_unicode1,
+re_test(replace_unicode1,
      [condition(re_config(utf8(true))),
       true(NewString == "網目錦蛇 [reticulated python へび]")]) :-
     re_replace('àmímé níshíkíhéꜜbì', "reticulated python へび",
 	       '網目錦蛇 [àmímé níshíkíhéꜜbì]', NewString).
-test(replace_unicode2,
+re_test(replace_unicode2,
      [condition(re_config(utf8(true))),
       true(NewString == "網目錦へび [àmímé níshíkíhéꜜbì]")]) :-
     re_replace('(a蛇é)+', "へび",
 	       '網目錦a蛇éa蛇éa蛇éa蛇é [àmímé níshíkíhéꜜbì]', NewString).
-test(replace_unicode3,
+re_test(replace_unicode3,
      [condition(re_config(utf8(true))),
       true(NewString == "網目へび [àmímé níshíkíhéꜜbì]")]) :-
     re_replace("[蛇錦]+", "へび",
 	       "網目錦蛇 [àmímé níshíkíhéꜜbì]", NewString).
 
-test(config_not_compound1, error(type_error(compound,version(A,B)),_)) :-
+re_test(config_not_compound1, error(type_error(compound,version(A,B)),_)) :-
     re_config(version(A,B)).
-test(config_not_compound2, error(type_error(compound,foo(A,B)),_)) :-
+re_test(config_not_compound2, error(type_error(compound,foo(A,B)),_)) :-
     re_config(foo(A,B)).
-test(config_not_compound3, error(type_error(compound,bsr),_)) :-
+re_test(config_not_compound3, error(type_error(compound,bsr),_)) :-
     re_config(bsr).
-test(config_not_compound4, error(type_error(compound,123),_)) :-
+re_test(config_not_compound4, error(type_error(compound,123),_)) :-
     re_config(123).
-test(config_not_compound5, error(instantiation_error,_)) :-
+re_test(config_not_compound5, error(instantiation_error,_)) :-
     re_config(_).
-test(config_invalid, error(existence_error(re_config,qqsv(V)),_)) :-
+re_test(config_invalid, error(existence_error(re_config,qqsv(V)),_)) :-
     re_config(qqsv(V)).
-test(config_version) :-
+re_test(config_version) :-
     re_config(version(V)),
     must_be(atom, V), % TODO: V is of the form '8.39 2016-06-14'.
     re_config(version(V)). % Check that it takes an argument
-test(config_version_type, fail) :-
+re_test(config_version_type, fail) :-
     re_config(version(V)),
     atom_string(V, Vstr),
     re_config(version(Vstr)).
-test(config_version_value, [setup((re_config(version(V)),
-				   atomic_concat(V, ' ', V2))),
-			    fail]) :-
+test(config_version_value1, [setup((re_config(version(V)),
+			     atomic_concat(V, '---', V2))),
+                             fail]) :-
+    % Test that re_config(version(V2)) fails when given an argument
+    % that is guaranteed to not be the version (it has an extra '---' on the end)
     re_config(version(V2)).
-test(config_utf8) :-
+test(config_version_value2, [setup(re_config(version(V)))]) :-
+    re_config(version(V)).
+re_test(config_utf8) :-
     re_config(utf8(V)),
     must_be(boolean, V).
-test(config_utf8_value, [nondet]) :- % For verifying that this works: condition(re_config(utf8(true)))
+re_test(config_utf8_value, [nondet]) :- % For verifying that this works: condition(re_config(utf8(true)))
     (   re_config(utf8(true)) % TODO: shouldn't leave choicepoint
     ;   re_config(utf8(false))
     ).
-test(config_unicode_properties) :-
+re_test(config_unicode_properties) :-
     re_config(unicode_properties(V)),
     must_be(boolean, V).
-test(config_jit) :-
+re_test(config_jit) :-
     re_config(jit(V)),
     must_be(boolean, V).
-test(config_jittarget) :-
+re_test(config_jittarget) :-
     re_config(jittarget(V)),
     must_be(atom, V).
-test(config_newline) :-
+re_test(config_newline) :-
     re_config(newline(V)),
     must_be(integer, V).
-test(config_bsr) :-
+re_test(config_bsr) :-
     re_config(bsr(V)),
     must_be(integer, V).
-test(config_link_size) :-
+re_test(config_link_size) :-
     re_config(link_size(V)),
     must_be(integer, V).
-test(config_posix_malloc_threshold) :-
+re_test(config_posix_malloc_threshold) :-
     re_config(posix_malloc_threshold(V)),
     must_be(integer, V).
-test(config_parens_limit) :-
+re_test(config_parens_limit) :-
     re_config(parens_limit(V)),
     must_be(integer, V).
-test(config_match_limit) :-
+re_test(config_match_limit) :-
     re_config(match_limit(V)),
     must_be(integer, V).
-test(config_match_limit_recursion) :-
+re_test(config_match_limit_recursion) :-
     re_config(match_limit_recursion(V)),
     must_be(integer, V).
-test(config_stackrecurse) :-
+re_test(config_stackrecurse) :-
     re_config(stackrecurse(V)),
     must_be(boolean, V).
 
-test(compile_config_0,
+re_test(compile_config_0,
      RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING])") :-
     re_compile(".", Regex, []),
     pcre:'$re_portray_string'(Regex, RegexStr).
 
-test(compile_config_1,
+re_test(compile_config_1,
      RegexStr == "<regex>(/./ [ANCHORED CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED EXTRA FIRSTLINE JAVASCRIPT_COMPAT MULTILINE NO_AUTO_CAPTURE NO_UTF8_CHECK UCP UNGREEDY UTF8 BSR_ANYCRLF NEWLINE_CRLF CAP_RANGE])") :-
     re_compile('.',  Regex,
 	       [anchored(true),
@@ -230,7 +267,7 @@ test(compile_config_1,
 	       ]),
     pcre:'$re_portray_string'(Regex, RegexStr).
 
-test(compile_config_1_inverse,
+re_test(compile_config_1_inverse,
      RegexStr == "<regex>(/./ [JAVASCRIPT_COMPAT NO_UTF8_CHECK UTF8 BSR_UNICODE NEWLINE_CR CAP_RANGE])") :-
     re_compile('.', Regex,
 	       [anchored(false),
@@ -279,20 +316,20 @@ test(compile_config_1_inverse,
 	       ]),
     pcre:'$re_portray_string'(Regex, RegexStr).
 
-test(compile_config_2,
+re_test(compile_config_2,
      RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_ATOM])") :-
     re_compile('.', Regex, [multiline(false),caseless(false),capture_type(atom),foo]),
     pcre:'$re_portray_string'(Regex, RegexStr).
 
-test(compile_config_3,
+re_test(compile_config_3,
      RegexStr == "<regex>(/./ [CASELESS MULTILINE NO_UTF8_CHECK UTF8 NEWLINE_LF CAP_TERM])") :-
     re_compile('.', Regex, [qqsv,zot(123),optimise(false),capture_type(term),multiline(true),caseless(true),newline(lf)]),
     pcre:'$re_portray_string'(Regex, RegexStr).
 
-test(compile_config_4, error(type_error(option, newline(qqsv)), _)) :-
+re_test(compile_config_4, error(type_error(option, newline(qqsv)), _)) :-
     re_compile('.', _Regex, [newline(qqsv)]).
 
-test(compile_exec_1,
+re_test(compile_exec_1,
      [RegexStr,  MatchOptsStr, Sub, Sub2] ==
      ["<regex>(/./ [ANCHORED NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING])",
       "NOTBOL NOTEMPTY NOTEMPTY_ATSTART NOTEOL NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0",
@@ -305,21 +342,38 @@ test(compile_exec_1,
     pcre:'$re_portray_string'(Regex, RegexStr),
     re_matchsub(Regex, "abc", Sub2, [start(1)|MatchOpts]).
 
-test(compile_exec_2,
+re_test(compile_exec_2,
      MatchOptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0") :-
     pcre:'$re_portray_match_options_string'([anchored(false),bol(true),eol(true),empty(true),empty_atstart(true)],
 					    MatchOptsStr).
 
-test(compile_exec_3,
+re_test(compile_exec_3,
      MatchOptionsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0") :-
     pcre:'$re_portray_match_options_string'([], MatchOptionsStr).
 
-test(match_ok_start, Sub==re_match{0:"c"}) :-
+re_test(match_ok_start, Sub==re_match{0:"c"}) :-
     re_matchsub('.', "abc", Sub, [start(2)]).
-test(match_bad_start1, error(domain_error(offset,-1),_)) :- % TODO: -1 vs 3
+re_test(match_bad_start1, error(domain_error(offset,-1),_)) :- % TODO: -1 vs 3
     re_matchsub('.', "abc", _Sub, [start(3)]).
-test(match_bad_start2, error(type_error(option,start=3),_)) :-
+re_test(match_bad_start2, error(type_error(option,start=3),_)) :-
     re_matchsub('.', "abc", _Sub, [start=3]).
+
+re_test(cached_compile_1a) :-
+    re_compile('b', Re1, [caseless(true)]),
+    re_compile('b', Re2, [caseless(false)]),
+    assertion(   re_match(Re1, "ABC")),
+    assertion(\+ re_match(Re2, "ABC")).
+re_test(cached_compile_1b, fixme(issue7)) :- % as cached_compile_1a but using text instead of Regex
+    assertion(   re_match('b', "ABC", [caseless(true)])),
+    assertion(\+ re_match('b', "ABC", [caseless(false)])).
+re_test(cached_compile_1bx, fixme(issue7)) :- % as cached_compile_1b but without the assertions.
+                 re_match('b', "ABC", [caseless(true)]),
+              \+ re_match('b', "ABC", [caseless(false)]).
+re_test(cached_compile_1c, fixme(issue7)) :- % as cached_compile_1b but ensure no caching
+    re_flush,
+    assertion(   re_match('b', "ABC", [caseless(true)])),
+    re_flush,
+    assertion(\+ re_match('b', "ABC", [caseless(false)])).
 
 :- end_tests(pcre).
 
