@@ -51,38 +51,65 @@ test_pcre :-
 
 % TODO: make this part of plunit?
 %       see https://swi-prolog.discourse.group/t/plunit-and-individual-test-setup-cleanup/4853
+:- dynamic seen_re_test/1.
+:- retractall(seen_re_test(_)).
+
 term_expansion((re_test(Name) :- Body),
                   (test(Name, Options2) :- Body)) :-
-    expand_options([], Options2).
+    ( seen_re_test(Name) -> throw(error(dup_re_test(Name), _)) ; true ),
+    assertz(seen_re_test(Name)),
+    expand_re_test_options([], Options2).
 term_expansion((re_test(Name, Options) :- Body),
                   (test(Name, Options2) :- Body)) :-
-    expand_options(Options, Options2).
-:- det(exand_options/2).
-expand_options([], Options2) =>
+    ( seen_re_test(Name) -> throw(error(dup_re_test(Name), _)) ; true ),
+    assertz(seen_re_test(Name)),
+    expand_re_test_options(Options, Options2).
+:- det(expand_re_test_options/2).
+expand_re_test_options([], Options2) =>
     Options2 = [setup(re_flush)].
-expand_options([O1|O2], Options2) =>
+expand_re_test_options([O1|O2], Options2) =>
     % assertion(\+ memberchk(setup(_), [O1|O2])) doesn't work as expected
     (   memberchk(setup(_), [O1|O2])
     ->  throw(error(setup_conflict([O1|O2]), _))
     ;   true
     ),
     Options2 = [setup(re_flush),O1|O2].
-expand_options(Option, Options2) => % e.g.: re_test(t123, X==[1,2,3]) :- pred(123, X).
-    expand_options([Option], Options2).
+expand_re_test_options(Option, Options2) => % e.g.: re_test(t123, X==[1,2,3]) :- pred(123, X).
+    expand_re_test_options([Option], Options2).
 
 :- begin_tests(pcre, [cleanup(test_report(fixme)), setup(re_flush)]).
 
-re_test(match1, [Sub == re_match{0:"aap"}]) :-
+re_test(match1) :-
+    re_match("a+p", "xxxaapenootjes", []).
+re_test(match2, fail) :-
+    re_match("a+p", "xxxaapenootjes", [anchored(true)]).
+re_test(match3) :-
+    re_match("a+p"/i, "xxxAAAPnootjes", []),
+    % Check that "a+p"/i is cached with its options:
+    assertion(\+ re_match("a+p", "xxxAAAPnootjes", [])).
+re_test(match4) :-
+    re_match("a+p", "xxxAAAPnootjes", [caseless(true)]).
+
+re_test(matchsub1a, Sub == re_match{0:"aap"}) :-
     re_compile("a+p", Re, []),
     re_matchsub(Re, "aapenootjes", Sub, []).
-re_test(match1a, Sub == re_match{1:"aap", 2:"aaaaaaap", 0:"aapenootjes  aaaaaaap"}) :-
+re_test(matchsub1b, Sub == re_match{0:'aap'}) :-
+    re_compile("a+p", Re, [capture_type(atom)]),
+    re_matchsub(Re, "aapenootjes", Sub, []).
+re_test(matchsub2, Sub == re_match{1:"aap", 2:"aaaaaaap", 0:"aapenootjes  aaaaaaap"}) :-
     re_matchsub("(a+?p).*?(a+?p)", "meer aapenootjes  aaaaaaapenootjes", Sub, []).
-re_test(match1b, fail) :-
+re_test(matchsub2b, fail) :-
     re_compile("a+p", Re, [anchored(true)]),
     re_matchsub(Re, "---aapenootjes", _Sub, []).
-re_test(match1c, Sub == re_match{0:"AAP"}) :-
+re_test(matchsub3, Sub == re_match{0:"AAP"}) :-
     re_compile("a+p", Re, [anchored(false), caseless(true)]),
     re_matchsub(Re, "---AAPenootjes", Sub, []).
+re_test(matchsub4, Sub == re_match{0:"AAP"}) :-
+    re_matchsub("a+p"/i, "---AAPenootjes", Sub),
+    % Check that "a+p"/i is cached with its options:
+    assertion(\+ re_matchsub("a+p", "---AAPenootjes", _)).
+re_test(matchsub5, Sub == re_match{0:'AAP'}) :-
+    re_matchsub("a+p"/ia, "---AAPenootjes", Sub).
 
 re_test(compile_option1) :-
     re_compile("a+b", _Re, [compat(javascript)]).
@@ -92,7 +119,7 @@ re_test(compile_option2, error(domain_error(compat_option, qqsv), _)) :-
 re_test(start, Sub == re_match{0:"es"}) :-
     re_compile("e.", Re, []),
     re_matchsub(Re, "aapenootjes", Sub, [start(4)]).
-re_test(fold, Words == ["aap", "noot", "mies"]) :-
+re_test(fold1, Words == ["aap", "noot", "mies"]) :-
     re_foldl(add_match, "[a-z]+", "aap noot mies", Words, [], []).
 re_test(fold2, Words == [re_match{0:"aap"},re_match{0:"noot"},re_match{0:"mies"}]) :-
     re_foldl(add_match2, "[a-z]+", "  aap    noot mies ", Words, [], []).
@@ -106,9 +133,9 @@ re_test(named, [Sub, RegexStr] ==
 	       [extended]),
     re_matchsub(Re, "2017-04-20", Sub, []),
     pcre:'$re_portray_string'(Re, RegexStr).
-re_test(typed, Sub == re_match{0:"2017-04-20",
-			       date:"2017-04-20",
-			       day:20,month:4,year:2017}) :-
+re_test(typed1, Sub == re_match{0:"2017-04-20",
+				date:"2017-04-20",
+				day:20,month:4,year:2017}) :-
     re_matchsub("(?<date> (?<year_I>(?:\\d\\d)?\\d\\d) -
 		 (?<month_I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
 		"2017-04-20", Sub, []).
@@ -126,30 +153,39 @@ re_test(capture_string1a, Subs == re_match{0:"abc", 1:"a", 2:"b", 3:"c"}) :-
 re_test(capture_string1b, Subs == re_match{0:"abc", 1:"a", 2:"b", 3:"c"}) :-
     re_compile('(a)(b)(c)', Re, [capture_type(string)]),
     re_matchsub(Re, 'xabc', Subs, []).
-re_test(capture_atom1a, [true(Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'}), fixme(global_capture_type)]) :-
+re_test(capture_atom1a, Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'}) :-
     re_matchsub('(a)(b)(c)', 'xabc', Subs, [capture_type(atom)]).
-re_test(capture_atom1b, [true(Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'})]) :-
+re_test(capture_atom1b, Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'}) :-
     re_compile('(a)(b)(c)', Re, [capture_type(atom)]),
     re_matchsub(Re, 'xabc', Subs, [capture_type(atom)]).
-re_test(capture_atom1c, [true(Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'})]) :-
+re_test(capture_atom1c, Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'}) :-
     re_compile('(a)(b)(c)', Re, [capture_type(atom)]),
     re_matchsub(Re, 'xabc', Subs, []).
-re_test(capture_range, [true(Subs == re_match{0:0-3, 1:0-1, 2:1-1, 3:2-1}), fixme(global_capture_type)]) :-
+re_test(capture_range1, [true(Subs == re_match{0:0-3, 1:0-1, 2:1-1, 3:2-1}), fixme(global_capture_type)]) :-
     re_matchsub('(a+)(b+)(c+)', 'xabc', Subs, [capture_type(range)]).
 re_test(capture_range2, [true(Subs == re_match{0:0-3, 1:0-1, 2:1-1, 3:2-1}), fixme(issue_8)]) :-
     re_compile('(a+)(b+)(c+)', Re, [capture_type(range)]),
     re_matchsub(Re, 'xabc', Subs, []).
 re_test(capture_atom2, [true(Subs == re_match{0:"Name: value", value:'value'}), fixme(global_capture_type)]) :-
     re_matchsub(".*:\\s(?<value>.*)", "Name: value", Subs, [extended(true), capture_type(atom)]).
+
 re_test(split, Split == ["","a","b","aa","c"]) :-
     re_split("a+", "abaac", Split, []).
-re_test(replace, NewString == "Abaac") :-
+
+re_test(replace1, NewString == "Abaac") :-
     re_replace("a+", "A", "abaac", NewString).
-re_test(replace, NewString == "A1ba2a3c") :-
+re_test(replace2, NewString == "A1ba2a3c") :-
     re_replace("a(\\d)", "A\\1", "a1ba2a3c", NewString).
-re_test(replace_all, NewString == "AbAc") :-
+re_test(replace_all1, NewString == "AbAc") :-
     re_replace("a+"/g, "A", "abaac", NewString).
-re_test(replace_all, NewString == "A1bA2A3c") :-
+re_test(replace_all2a, NewString == 'XbXc') :-
+    re_replace("a+"/gia, "X", "AbaAc", NewString).
+re_test(replace_all2b, [fixme(global_capture_type),
+                        [NewString,NewString2] ==
+                       ['XbXXc',"AbXAc"]]) :-
+    re_replace("a+", "X", "AbaAc", NewString, [caseless(true),capture_type(atom)]),
+    re_replace("a+", "X", "AbaAc", NewString2).
+re_test(replace_all2c, NewString == "A1bA2A3c") :-
     re_replace("a(\\d)"/g, "A\\1", "a1ba2a3c", NewString).
 re_test(replace_none, NewString == "a1ba2a3c") :-
     re_replace("x(\\d)"/g, "A\\1", "a1ba2a3c", NewString).
@@ -363,13 +399,13 @@ re_test(cached_compile_1a) :-
     re_compile('b', Re2, [caseless(false)]),
     assertion(   re_match(Re1, "ABC")),
     assertion(\+ re_match(Re2, "ABC")).
-re_test(cached_compile_1b, fixme(issue7)) :- % as cached_compile_1a but using text instead of Regex
+re_test(cached_compile_1b) :- % as cached_compile_1a but using text instead of Regex
     assertion(   re_match('b', "ABC", [caseless(true)])),
     assertion(\+ re_match('b', "ABC", [caseless(false)])).
-re_test(cached_compile_1bx, fixme(issue7)) :- % as cached_compile_1b but without the assertions.
+re_test(cached_compile_1bx ) :- % as cached_compile_1b but without the assertions.
                  re_match('b', "ABC", [caseless(true)]),
               \+ re_match('b', "ABC", [caseless(false)]).
-re_test(cached_compile_1c, fixme(issue7)) :- % as cached_compile_1b but ensure no caching
+re_test(cached_compile_1c) :- % as cached_compile_1b but ensure no caching
     re_flush,
     assertion(   re_match('b', "ABC", [caseless(true)])),
     re_flush,

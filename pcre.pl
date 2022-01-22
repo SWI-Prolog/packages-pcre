@@ -35,11 +35,13 @@
 :- module(pcre,
           [ re_match/2,           % +Regex, +String
             re_match/3,           % +Regex, +String, +Options
+            re_matchsub/3,        % +Regex, +String, -Subs
             re_matchsub/4,        % +Regex, +String, -Subs, +Options
             re_foldl/6,           % :Goal, +Regex, +String, ?V0, ?V, +Options
             re_split/3,		  % +Pattern, +String, -Split:list
             re_split/4,		  % +Pattern, +String, -Split:list, +Options
             re_replace/4,	  % +Pattern, +With, +String, -NewString
+            re_replace/5,	  % +Pattern, +With, +String, -NewString, +Options
             re_compile/3,         % +Pattern, -Regex, +Options
             re_flush/0,
             re_config/1           % ?Config
@@ -73,11 +75,13 @@ Regular  expressions  are  created  from  a   pattern  and  options  and
 represented as a SWI-Prolog _blob_.  This   implies  they are subject to
 (atom) garbage collection. Compiled regular   expressions  can safely be
 used in multiple threads. Most  predicates   accept  both  an explicitly
-compiled regular expression, a pattern or   a term Pattern/Flags. In the
+compiled regular expression, a pattern, or  a term Pattern/Flags.    The
+semantics of the pattern can be additionally modified by options. In the
 latter two cases a regular expression _blob_  is created and stored in a
 cache. The cache can be cleared using re_flush/0.
 
-@see `man pcre` for details.
+@see `man pcreapi` or https://www.pcre.org/original/doc/html/pcreapi.html
+     for details of the PCRE syntax and options.
 */
 
 :- predicate_options(re_match/3, 3,
@@ -158,13 +162,19 @@ cache. The cache can be cleared using re_flush/0.
 %     - *a*: capture_type(atom)
 %     - *r*: capture_type(range)
 %     - *t*: capture_type(term)
+%
+%   If Regex is the output of re_compile/3, any compile-time options
+%   in Options are ignored and only match-time options are used. The
+%   options that are derived from flags take precedence over the
+%   options in the Options list.
 
 re_match(Regex, String) :-
     re_match(Regex, String, []).
 re_match(Regex, String, Options) :-
-    re_compiled(Regex, Compiled),
+    re_compiled(Regex, Compiled, Options),
     re_match_(Compiled, String, Options).
 
+%!  re_matchsub(+Regex, +String, -Sub:dict) is semidet.
 %!  re_matchsub(+Regex, +String, -Sub:dict, +Options) is semidet.
 %
 %   Match String against Regex. On  success,   Sub  is a dict containing
@@ -192,8 +202,11 @@ re_match(Regex, String, Options) :-
 %   `/flags` to Regex.
 %   @arg Regex  See re_match/2 for a description of this argument.
 
+re_matchsub(Regex, String, Subs) :-
+    re_matchsub(Regex, String, Subs, []).
+
 re_matchsub(Regex, String, Subs, Options) :-
-    re_compiled(Regex, Compiled),
+    re_compiled(Regex, Compiled, Options),
     re_matchsub_(Compiled, String, Pairs, Options),
     dict_pairs(Subs, re_match, Pairs).
 
@@ -230,7 +243,7 @@ re_matchsub(Regex, String, Subs, Options) :-
 %     ```
 
 re_foldl(Goal, Regex, String, V0, V, Options) :-
-    re_compiled(Regex, Compiled),
+    re_compiled(Regex, Compiled, Options),
     re_foldl_(Compiled, String, Goal, V0, V, Options).
 
 :- public re_call_folder/4.
@@ -266,20 +279,22 @@ re_call_folder(Goal, Pairs, V0, V1) :-
 re_split(Pattern, String, Split) :-
     re_split(Pattern, String, Split, []).
 re_split(Pattern, String, Split, Options) :-
-    range_regex(Pattern, Compiled, Type),
+    split_range_regex(Pattern, Compiled, Type),
     State = state(String, 0, Type),
     re_foldl(split(State), Compiled, String, Split, [Last], Options),
     arg(2, State, LastSkipStart),
     typed_sub(Type, String, LastSkipStart, _, 0, Last).
 
-range_regex(Pattern/Flags, Compiled, Type) =>
+split_range_regex(Pattern/Flags, Compiled, Type) =>
     atom_chars(Flags, Chars),
     replace_flags(Chars, Chars1, Type),
     atom_chars(RFlags, [r|Chars1]),
-    re_compiled(Pattern/RFlags, Compiled).
-range_regex(Pattern, Compiled, Type) =>
+    re_flags_options(RFlags, Options),
+    re_compiled(Pattern/RFlags, Compiled, Options).
+split_range_regex(Pattern, Compiled, Type) =>
     Type = string,
-    re_compiled(Pattern/r, Compiled).
+    re_flags_options(r, Options), % Pattern/r
+    re_compiled(Pattern, Compiled, Options).
 
 replace_flags([], [], Type) :-
     default(Type, string).
@@ -319,19 +334,29 @@ typed_sub(name, Haystack, B, L, A, Value) :-
     ;   atom_string(Value, String)
     ).
 
-%!  re_replace(+Pattern, +With, +String, -NewString)
+%!  re_replace(+Pattern, +With, +String, -NewString) is det.
+%!  re_replace(+Pattern, +With, +String, -NewString, +Options) is det.
 %
 %   Replace matches of the regular  expression   Pattern  in String with
-%   With. With may reference captured substrings using \N or $Name. Both
-%   N and Name may be written as {N} and {Name} to avoid ambiguities.
+%   With (possibly containing references to captured substrings)
 %
 %   @arg Pattern is the pattern  text,   optionally  follows  by /Flags.
 %   Flags may include `g`,  replacing  all   occurences  of  Pattern. In
 %   addition, similar to re_matchsub/4, the  final   output  type can be
 %   controlled by a flag =a= (atom) or =s= (string, default).
+%   @arg With is the replacement text. It may reference captured
+%   substrings using \N or $Name. Both N and Name may be written as
+%   {N} and {Name} to avoid ambiguities.
+%   @arg Options Only _execution_ options are processed.  See re_match/3
+%   for the set of options.  _Compilation_ options must be passed as
+%   `/flags` to Regex.
+
 
 re_replace(Pattern, With, String, NewString) :-
-    range_regex(Pattern, Compiled, All, Type),
+    re_replace(Pattern, With, String, NewString, []).
+
+re_replace(Pattern, With, String, NewString, Options) :-
+    replace_range_regex(Pattern, Compiled, All, Type, Options),
     compile_replacement(With, RCompiled),
     State = state(String, 0, Type),
     (   All == all
@@ -348,15 +373,20 @@ re_replace(Pattern, With, String, NewString) :-
         parts_to_output(Type, Parts, NewString)
     ).
 
-range_regex(Pattern/Flags, Compiled, All, Type) =>
+%! replace_range_regex(+Pattern, -Compiled, -All, -Type, +Options) is det.
+replace_range_regex(Pattern/Flags, Compiled, All, Type, Options) =>
     atom_chars(Flags, Chars),
     replace_flags(Chars, Chars1, All, Type),
     atom_chars(RFlags, [r|Chars1]),
-    re_compiled(Pattern/RFlags, Compiled).
-range_regex(Pattern, Compiled, All, Type) =>
+    re_flags_options(RFlags, ROptions),
+    append(ROptions, Options, Options2),
+    re_compiled(Pattern, Compiled, Options2).
+replace_range_regex(Pattern, Compiled, All, Type, Options) =>
     All = first,
     Type = string,
-    re_compiled(Pattern/r, Compiled).
+    re_flags_options(r, ROptions), % Pattern/r
+    append(ROptions, Options, Options2),
+    re_compiled(Pattern, Compiled, Options2).
 
 replace_flags([], [], All, Type) :-
     default(All, first),
@@ -406,8 +436,12 @@ parts_to_output(atom, Parts, String) :-
 %   Compile the replacement specification into  a specification that can
 %   be processed quickly. The compiled expressions are cached and may be
 %   reclaimed using re_flush/0.
+%
+%   This "compilation" has nothing to do with PCRE pattern compilation;
+%   it's used by re_replace/5 to cache the results of processing the
+%   `With` argument.
 
-:- dynamic replacement_cache/2.
+:- dynamic replacement_cache/2.  % replacement_cache(+With, -Compiled)
 :- volatile replacement_cache/2.
 
 compile_replacement(With, Compiled) :-
@@ -420,7 +454,7 @@ compile_replacement(With, Compiled) :-
 compile_replacement_nocache(With, r(Parts, Extract)) :-
     string_codes(With, Codes),
     phrase(replacement_parts(Parts, Pairs), Codes),
-    dict_pairs(Extract, _, Pairs).
+    dict_pairs(Extract, re_match, Pairs). % tag must be a re_match or _ for replace/4
 
 replacement_parts(Parts, Extract) -->
     string(HCodes),
@@ -536,7 +570,7 @@ alnum(L) -->
 %     * ucp(Bool)
 %     If =true=, use Unicode properties for \d, \w, etc.
 %
-%   In addition to the options above that directly map to pcre flags the
+%   In addition to the options above that directly map to PCRE flags the
 %   following options are processed:
 %
 %     * optimise(Bool) or optimize(Bool)
@@ -564,34 +598,34 @@ alnum(L) -->
 %    and =R= (range). In the current implementation =I=, =F= and =N= are
 %    synonyms for =T=. Future versions may   act different if the parsed
 %    value is not of the requested numeric type.
+%
+%    Note that re_compile/3 does not support the Pattern/Flags form that
+%    is supported by re_match/3, re_replace/4, etc.; the Pattern must
+%    be text and all compile options specified in Options.
 
-%!  re_compiled(+Spec, --Regex) is det.
+%!  re_compiled(+Spec, --Regex, +Options) is det.
 %
 %   Create a compiled regex from a specification.  Cached compiled
 %   regular expressions can be reclaimed using re_flush/0.
 
-:- dynamic re_pool/3.
-:- volatile re_pool/3.
+:- dynamic re_compiled_cache/3.  % re_compiled_cache(+Text, +Regex, +Options)
+:- volatile re_compiled_cache/3.
 
-re_compiled(Regex, Regex) :-
+re_compiled(Regex, Regex, _Options) :-
     blob(Regex, regex),
     !.
-re_compiled(Text/Flags, Regex) :-
+re_compiled(Text/Flags, Regex, Options) :- !,
     must_be(text, Text),
     must_be(atom, Flags),
-    re_pool(Text, Flags, Regex),
-    !.
-re_compiled(Text/Flags, Regex) :-
-    !,
-    re_flags_options(Flags, Options),
-    re_compile(Text, Regex, Options),
-    assertz(re_pool(Text, Flags, Regex)).
-re_compiled(Text, Regex) :-
-    must_be(text, Text),
-    re_pool(Text, '', Regex),
-    !.
-re_compiled(Text, Regex) :-
-    re_compiled(Text/'', Regex).
+    re_flags_options(Flags, Options0),
+    append(Options0, Options, Options2),
+    (   re_compiled_cache(Text, Regex, Options2)
+    ->  true
+    ;   re_compile(Text, Regex, Options2),
+        assertz(re_compiled_cache(Text, Flags, Regex))
+    ).
+re_compiled(Text, Regex, Options) :-
+    re_compiled(Text/'', Regex, Options).
 
 re_flags_options(Flags, Options) :-
     atom_chars(Flags, Chars),
@@ -619,7 +653,7 @@ re_flag_option_(t, capture_type(term)).
 
 re_flush :-
     retractall(replacement_cache(_,_)),
-    retractall(re_pool(_,_,_)).
+    retractall(re_compiled_cache(_,_,_)).
 
 %!  re_config(+Term)
 %

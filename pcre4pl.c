@@ -669,9 +669,8 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
     copts->seen_flags |= RE_STUDY;
     switch(effective_bool(arg))
     { case TRUE:
-      { copts->flags |= RE_STUDY;
+	copts->flags |= RE_STUDY;
 	return TRUE;
-      }
       case FALSE:
 	copts->flags &= ~RE_STUDY;
 	return TRUE;
@@ -699,6 +698,7 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
     else
     { return PL_domain_error("capture_type", arg);
     }
+    return TRUE;
   }
 
   return TRUE;
