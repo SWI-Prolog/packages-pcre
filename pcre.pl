@@ -97,19 +97,21 @@ cache. The cache can be cleared using re_flush/0.
                      ]).
 :- predicate_options(re_compile/3, 3,
                      [ anchored(boolean),
+                       auto_capture(boolean),
                        bsr(oneof([anycrlf,unicode])),
                        caseless(boolean),
+                       compat(oneof([javascript])),
                        dollar_endonly(boolean),
                        dotall(boolean),
                        dupnames(boolean),
                        extended(boolean),
                        extra(boolean),
                        firstline(boolean),
-                       compat(oneof([javascript])),
+                       greedy(boolean),
                        multiline(boolean),
                        newline(oneof([any,anycrlf,cr,lf,crlf])),
                        ucp(boolean),
-                       ungreedy(boolean)
+                       ungreedy(boolean) % Backward compatibility
                      ]).
 
 
@@ -132,18 +134,19 @@ cache. The cache can be cleared using re_flush/0.
 %     * anchored(Bool)
 %     If =true=, match only at the first position
 %     * bol(Bool)
-%     Subject string is the beginning of a line (default =false=)
+%     String is the beginning of a line (default =false=) -
+%       affects behavior of circumflex metacharacter (=^=).
 %     * bsr(Mode)
 %     If =anycrlf=, \R only matches CR, LF or CRLF.  If =unicode=,
 %     \R matches all Unicode line endings.
-%     Subject string is the end of a line (default =false=)
 %     * empty(Bool)
 %     An empty string is a valid match (default =true=)
 %     * empty_atstart(Bool)
 %     An empty string at the start of the subject is a valid match
 %     (default =true=)
 %     * eol(Bool)
-%     Subject string is the end of a line (default =false=)
+%     String is the end of a line (default =false=) -
+%       affects behavior of dollar metacharacter (=$=).
 %     * newline(Mode)
 %     If =any=, recognize any Unicode newline sequence,
 %     if =anycrlf=, recognize CR, LF, and CRLF as newline
@@ -341,17 +344,24 @@ typed_sub(name, Haystack, B, L, A, Value) :-
 %   Replace matches of the regular  expression   Pattern  in String with
 %   With (possibly containing references to captured substrings)
 %
+%   Throws an error if With uses a name that doesn't exist in the Pattern.
+%
 %   @arg Pattern is the pattern  text,   optionally  follows  by /Flags.
 %   Flags may include `g`,  replacing  all   occurences  of  Pattern. In
 %   addition, similar to re_matchsub/4, the  final   output  type can be
 %   controlled by a flag =a= (atom) or =s= (string, default).
+%   Names in the pattern must not have a capture type suffix
+%   (e.g., =(?<foo_A>.)= is not allowed but =(?<foo>.)= is allowed.
 %   @arg With is the replacement text. It may reference captured
 %   substrings using \N or $Name. Both N and Name may be written as
-%   {N} and {Name} to avoid ambiguities.
-%   @arg Options Only _execution_ options are processed.  See re_match/3
-%   for the set of options.  _Compilation_ options must be passed as
-%   `/flags` to Regex.
-
+%   {N} and {Name} to avoid ambiguities. If a substring is named,
+%   it cannot be referenced by its number. The single chracters =$=
+%   and =\= can be escaped by doubling (e.g.,
+%   =re_replace(".","$$","abc",Replaced)=
+%   results in =Replaced="$bc"=). (Because =\= is an escape
+%   character inside strings, you need to write "\\\\" to get
+%   a single backslash.)
+%   @arg Options See re_match/3 for the set of options.
 
 re_replace(Pattern, With, String, NewString) :-
     re_replace(Pattern, With, String, NewString, []).
@@ -406,18 +416,24 @@ all(g, all).
 type(a, atom).
 type(s, string).
 
-% TODO: Verify that this code means:
-%       default(Val, Default), var(Val) => Val = Default.
-%       default(_Val, _Default) => true.
+%! default(?Val, +Default) is det.
+%  If Val isn't instantiated, instantiate it to Default.
+%  If Val is already instantiated, succeed.
+%  Equivalent to:
+%     default( Val,  Default), var(Val) => Val = Default.
+%     default(_Val, _Default) => true.
 default(Val, Val) :- !.
 default(_, _).
 
 replace(State, With, Dict, [Skipped|Parts], T) :-
     State = state(String, _, _Type),
     copy_term(With, r(PartsR, Skel)),
-    Skel :< Dict,
+    maplist(dict_pair_lookup(Dict), Skel),
     range_strings(PartsR, String, Parts, T),
     skipped(State, Dict.0, Skipped).
+
+% dict_pair_lookup(d{a:1}, a-K) results in K=1.
+dict_pair_lookup(Dict, Key-Dict.Key).
 
 range_strings([], _, T, T).
 range_strings([Start-Len|T0], String, [S|T1], T) :-
@@ -455,10 +471,11 @@ compile_replacement(With, Compiled) :-
 compile_replacement_nocache(With, r(Parts, Extract)) :-
     string_codes(With, Codes),
     phrase(replacement_parts(Parts, Pairs), Codes),
-    dict_pairs(Extract, re_match, Pairs). % tag must be a re_match or _ for replace/4
+    % The Pairs is Key-Value pairs, but a Key might be duplicated.
+    Extract = Pairs.
 
 replacement_parts(Parts, Extract) -->
-    string(HCodes),
+    string_escape(HCodes),
     (   ("\\" ; "$"),
         capture_name(Name)
     ->  !,
@@ -478,6 +495,20 @@ add_part([], Parts, Parts) :-
     !.
 add_part(Codes, [H|T], T) :-
     string_codes(H, Codes).
+
+%! string_escape(-Codes)// is nondet.
+% Similar to dcg_basics:string(Codes) but also escapes "$" and "/"
+string_escape([]) -->
+    [].
+string_escape([0'$|T]) -->
+    "$$",
+    string_escape(T).
+string_escape([0'\\|T]) -->
+    "\\\\",
+    string_escape(T).
+string_escape([H|T]) -->
+    [H],
+    string_escape(T).
 
 capture_name(Name) -->
     "{",

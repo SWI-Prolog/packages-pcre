@@ -72,19 +72,19 @@ cap_type_str(int i)
 }
 
 typedef struct cap_how
-{ atom_t	name;
+{ atom_t	name; /* 0 if it's unnamed (referenced by number position) */
   cap_type	type;
 } cap_how;
 
 typedef struct re_data
-{ atom_t	symbol;			/* regex as blob */
-  atom_t	pattern;		/* pattern (as atom) */
-  int		re_options;		/* compilation options */
-  int		capture_size;		/* # captured subpatterns */
-  cap_how      *capture_names;		/* Names for captured data */
-  cap_type	capture_type;		/* Default return for capture */
-  pcre	       *pcre;			/* the compiled expression */
-  pcre_extra   *extra;			/* study result */
+{ atom_t	symbol;		/* regex as blob */
+  atom_t	pattern;	/* pattern (as atom) */
+  int		re_options;	/* compilation options */
+  int		capture_size;	/* # captured subpatterns */
+  cap_how      *capture_names;	/* Names for captured data */
+  cap_type	capture_type;	/* Default return for capture */
+  pcre	       *pcre;		/* the compiled expression */
+  pcre_extra   *extra;		/* study result (NULL if not RE_STUDY) */
 } re_data;
 
 
@@ -117,7 +117,7 @@ re_free(re_data *re)
 
 static functor_t FUNCTOR_pair2;		/* -/2 */
 
-/* Each ATOM_xxx definitions has a corresponding MKATOM(xxx) in
+/* Each ATOM_xxx definition has a corresponding MKATOM(xxx) in
    install_pcre4pl(). */
 static atom_t ATOM_optimise;
 static atom_t ATOM_optimize;
@@ -366,10 +366,14 @@ lookup_and_apply_optdef(re_optdef opt_defs[], atom_t name, unsigned mode,
 static re_optdef re_optdefs[] =
 { { "anchored",	       PCRE_ANCHORED,	      RE_COMP|RE_EXEC },
   { "auto_capture",    PCRE_NO_AUTO_CAPTURE,  RE_COMP|RE_NEG },
+  { "bol",	       PCRE_NOTBOL,	      RE_EXEC|RE_NEG },
   { "caseless",	       PCRE_CASELESS,	      RE_COMP },
   { "dollar_endonly",  PCRE_DOLLAR_ENDONLY,   RE_COMP },
   { "dotall",	       PCRE_DOTALL,	      RE_COMP },
   { "dupnames",	       PCRE_DUPNAMES,	      RE_COMP },
+  { "empty",	       PCRE_NOTEMPTY,	      RE_EXEC|RE_NEG },
+  { "empty_atstart",   PCRE_NOTEMPTY_ATSTART, RE_EXEC|RE_NEG },
+  { "eol",	       PCRE_NOTEOL,	      RE_EXEC|RE_NEG },
   { "extended",	       PCRE_EXTENDED,	      RE_COMP },
   { "extra",	       PCRE_EXTRA,	      RE_COMP },
   { "firstline",       PCRE_FIRSTLINE,	      RE_COMP },
@@ -378,10 +382,6 @@ static re_optdef re_optdefs[] =
   { "no_auto_capture", PCRE_NO_AUTO_CAPTURE,  RE_COMP }, /* backwards compatibility */
   { "ucp",	       PCRE_UCP,	      RE_COMP },
   { "ungreedy",	       PCRE_UNGREEDY,	      RE_COMP }, /* backwards compatibility */
-  { "bol",	       PCRE_NOTBOL,	      RE_EXEC|RE_NEG },
-  { "eol",	       PCRE_NOTEOL,	      RE_EXEC|RE_NEG },
-  { "empty",	       PCRE_NOTEMPTY,	      RE_EXEC|RE_NEG },
-  { "empty_atstart",   PCRE_NOTEMPTY_ATSTART, RE_EXEC|RE_NEG },
   { NULL, 0}
 };
 
@@ -437,7 +437,7 @@ re_get_options(term_t options, unsigned mode, unsigned *optp,
   { atom_t name;
     size_t arity;
     term_t arg;
-    if ( ! get_arg_1_if_any(head, &name, &arity, &arg) )
+    if ( !get_arg_1_if_any(head, &name, &arity, &arg) )
       return FALSE;
     if ( name == ATOM_bsr && arg && (mode&RE_COMP) && !seen_bsr )
     { atom_t aval;
@@ -500,20 +500,20 @@ typedef struct re_config_opt
 } re_config_opt;
 
 static re_config_opt cfg_opts[] =
-{ { "utf8",		      PCRE_CONFIG_UTF8,			  CFG_BOOL },
-  { "unicode_properties",     PCRE_CONFIG_UNICODE_PROPERTIES,	  CFG_BOOL },
+{ { "bsr",		      PCRE_CONFIG_BSR,			  CFG_INTEGER },
   { "jit",		      PCRE_CONFIG_JIT,			  CFG_BOOL },
   { "jittarget",	      PCRE_CONFIG_JITTARGET,		  CFG_STRING },
-  { "newline",		      PCRE_CONFIG_NEWLINE,		  CFG_INTEGER },
-  { "bsr",		      PCRE_CONFIG_BSR,			  CFG_INTEGER },
   { "link_size",	      PCRE_CONFIG_LINK_SIZE,		  CFG_INTEGER },
+  { "match_limit",	      PCRE_CONFIG_MATCH_LIMIT,		  CFG_INTEGER },
+  { "match_limit_recursion",  PCRE_CONFIG_MATCH_LIMIT_RECURSION,  CFG_INTEGER },
+  { "newline",		      PCRE_CONFIG_NEWLINE,		  CFG_INTEGER },
   { "posix_malloc_threshold", PCRE_CONFIG_POSIX_MALLOC_THRESHOLD, CFG_INTEGER },
+  { "stackrecurse",	      PCRE_CONFIG_STACKRECURSE,		  CFG_BOOL },
+  { "unicode_properties",     PCRE_CONFIG_UNICODE_PROPERTIES,	  CFG_BOOL },
+  { "utf8",		      PCRE_CONFIG_UTF8,			  CFG_BOOL },
 #ifdef PCRE_CONFIG_PARENS_LIMIT
   { "parens_limit",	      PCRE_CONFIG_PARENS_LIMIT,		  CFG_INTEGER },
 #endif
-  { "match_limit",	      PCRE_CONFIG_MATCH_LIMIT,		  CFG_INTEGER },
-  { "match_limit_recursion",  PCRE_CONFIG_MATCH_LIMIT_RECURSION,  CFG_INTEGER },
-  { "stackrecurse",	      PCRE_CONFIG_STACKRECURSE,		  CFG_BOOL },
   { NULL, 0}
 };
 
@@ -572,69 +572,62 @@ re_config(term_t opt)
   return PL_type_error("compound", opt);
 }
 
+static int
+set_capture_name_and_type(const char *s, re_data *re, int ci)
+{ const char *fs = strrchr(s, '_');
+  size_t len;
+
+  assert(ci < re->capture_size+1);
+
+  if ( (fs=strrchr(s, '_')) && fs[1] && !fs[2] )
+  { len = fs-s;
+    switch(fs[1])
+    { case 'S': re->capture_names[ci].type = CAP_STRING;  break;
+      case 'A': re->capture_names[ci].type = CAP_ATOM;    break;
+      case 'I': re->capture_names[ci].type = CAP_INTEGER; break;
+      case 'F': re->capture_names[ci].type = CAP_FLOAT;   break;
+      case 'N': re->capture_names[ci].type = CAP_NUMBER;  break;
+      case 'T': re->capture_names[ci].type = CAP_TERM;    break;
+      case 'R': re->capture_names[ci].type = CAP_RANGE;   break;
+      default:
+      { term_t ex;
+	return ( (ex=PL_new_term_ref()) &&
+		 PL_put_atom_chars(ex, &fs[1]) &&
+		 PL_existence_error("re_type_flag", ex) );
+      }
+    }
+  } else
+  { len = (size_t)-1; /* nul-terminated string */
+    re->capture_names[ci].type = re->capture_type;
+  }
+  if ( !(re->capture_names[ci].name = PL_new_atom_mbchars(REP_UTF8, len, s)) )
+    return FALSE;
+  return TRUE;
+}
+
 
 static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
 init_capture_map(re_data *re)
-{ int count;
-
-  if ( pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_CAPTURECOUNT, &count)==0 )
-  { re->capture_size = count;
-
-    if ( pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMECOUNT, &count)==0 &&
-	 count > 0 )
-    { int es;
-      const char *table;
-
-      if ( pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMEENTRYSIZE, &es)==0 &&
-	   pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMETABLE, &table)==0 )
-      { int i;
-	size_t cmsize = (re->capture_size+1)*sizeof(cap_how);
-
-	if ( (re->capture_names = malloc(cmsize)) )
-	{ memset(re->capture_names, 0, cmsize);
-	} else
-	  { return PL_resource_error("memory");
-	}
-
-	for(i=0; i<count; i++, table += es)
-	{ int ci = ((table[0]&0xff)<<8) + (table[1]&0xff);
-	  atom_t name;
-	  const char *s = &table[2];
-	  const char *fs;
-	  size_t len = (size_t)-1;
-
-	  assert(ci < re->capture_size+1);
-
-	  if ( (fs=strrchr(s, '_')) && fs[1] && !fs[2] )
-	  { len = fs-s;
-	    switch(fs[1])
-	    { case 'S': re->capture_names[ci].type = CAP_STRING;  break;
-	      case 'A': re->capture_names[ci].type = CAP_ATOM;	  break;
-	      case 'I': re->capture_names[ci].type = CAP_INTEGER; break;
-	      case 'F': re->capture_names[ci].type = CAP_FLOAT;	  break;
-	      case 'N': re->capture_names[ci].type = CAP_NUMBER;  break;
-	      case 'T': re->capture_names[ci].type = CAP_TERM;	  break;
-	      case 'R': re->capture_names[ci].type = CAP_RANGE;	  break;
-	      default:
-	      { term_t ex;
-		return ( (ex=PL_new_term_ref()) &&
-			 PL_put_atom_chars(ex, &fs[1]) &&
-			 PL_existence_error("re_type_flag", ex) );
-	      }
-	    }
-	  } else
-	  { re->capture_names[ci].type = re->capture_type;
-	  }
-
-	  if ( !(name = PL_new_atom_mbchars(REP_UTF8, len, s)) )
-	    return FALSE;
-
-	  re->capture_names[ci].name = name;
-	}
-      }
-    }
+{ int name_count;
+  int name_entry_size;
+  const char *table;
+  int i;
+  if ( pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_CAPTURECOUNT,  &re->capture_size)!=0 ||
+       pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMECOUNT,     &name_count)      !=0 ||
+       pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMEENTRYSIZE, &name_entry_size) !=0 ||
+       pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMETABLE,     &table)           !=0 )
+    return PL_resource_error("pcre_fullinfo");
+  if ( ! (re->capture_names = malloc((re->capture_size+1) * sizeof (cap_how))) )
+    return PL_resource_error("memory");
+  for(i=0; i<re->capture_size+1; i++)
+  { re->capture_names[i].name = 0;
+    re->capture_names[i].type = re->capture_type;
   }
-
+  for(i=0; i<name_count; i++, table += name_entry_size)
+  { if ( !set_capture_name_and_type(&table[2], re,
+				    ((table[0]&0xff)<<8) + (table[1]&0xff)) )
+      return FALSE;
+  }
   return TRUE;
 }
 
@@ -694,7 +687,7 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
 
 static void
 write_re_options(IOSTREAM *s, const char *sep, int re_options)
-{ 
+{
   /* The following were extracted from pcre.h and sorted, with bsr and newline at
      the end because they're multi-valued: */
 
@@ -753,23 +746,23 @@ re_portray(term_t stream, term_t regex)
   write_re_options(fd, "", re->re_options);
   /* TODO: compile_opts&RE_STUDY is in a flag that's not in re_data */
   /* TODO: match_opts.start is in a flag that's not in re_data */
-  Sfprintf(fd, " %s]", cap_type_str(re->capture_type));
-  if ( re->capture_size )
+  Sfprintf(fd, " %s] $capture=%d", cap_type_str(re->capture_type), re->capture_size);
+  if ( re->capture_size && re->capture_names )
   { int i;
     const char *sep = "";
-    Sfprintf(fd, " capture(%d){", re->capture_size);
+    Sfprintf(fd, " {", re->capture_size); Sflush(Suser_error);
     for(i=0; i<re->capture_size+1; i++)
     { if ( re->capture_names[i].name )
-      { Sfprintf(fd, "%s%d:%s:%s}", sep, i, PL_atom_chars(re->capture_names[i].name), cap_type_str(re->capture_names[i].type));
+      { Sfprintf(fd, "%s%d:%s:%s", sep, i, PL_atom_chars(re->capture_names[i].name), cap_type_str(re->capture_names[i].type));
 	sep = " ";
-      }
-      else
-      { Sfprintf(fd, "%s%d:-", sep, i);
+      } else
+      { Sfprintf(fd, "%s%d:%s", sep, i, cap_type_str(re->capture_names[i].type));
 	sep = " ";
       }
     }
-  } else {
-    /* Sfprintf(fd, " no-capture"); */
+    Sfprintf(fd, "}");
+  } else
+  { /* Sfprintf(fd, " no-capture"); */
   }
   Sfprintf(fd, ")");
 

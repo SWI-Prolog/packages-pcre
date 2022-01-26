@@ -127,7 +127,7 @@ re_test(named, [Sub, RegexStr] ==
 	       [re_match{0:"2017-04-20",
 			 date:"2017-04-20",
 			 day:"20",month:"04",year:"2017"},
-		"<regex>(/(?<date> (?<year>(?:\\d\\d)?\\d\\d) -\n\t\t(?<month>\\d\\d) - (?<day>\\d\\d) )/ [EXTENDED NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] capture(4){0:- 1:date:CAP_STRING} 2:year:CAP_STRING} 3:month:CAP_STRING} 4:day:CAP_STRING})"]) :-
+		"<regex>(/(?<date> (?<year>(?:\\d\\d)?\\d\\d) -\n\t\t(?<month>\\d\\d) - (?<day>\\d\\d) )/ [EXTENDED NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=4 {0:CAP_STRING 1:date:CAP_STRING 2:year:CAP_STRING 3:month:CAP_STRING 4:day:CAP_STRING})"]) :-
     re_compile("(?<date> (?<year>(?:\\d\\d)?\\d\\d) -
 		(?<month>\\d\\d) - (?<day>\\d\\d) )", Re,
 	       [extended]),
@@ -161,12 +161,14 @@ re_test(capture_atom1b, Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'}) :-
 re_test(capture_atom1c, Subs == re_match{0:'abc', 1:'a', 2:'b', 3:'c'}) :-
     re_compile('(a)(b)(c)', Re, [capture_type(atom)]),
     re_matchsub(Re, 'xabc', Subs, []).
-re_test(capture_range1, [true(Subs == re_match{0:0-3, 1:0-1, 2:1-1, 3:2-1}), fixme(global_capture_type)]) :-
+re_test(capture_range1, Subs == re_match{0:1-3, 1:1-1, 2:2-1, 3:3-1}) :-
     re_matchsub('(a+)(b+)(c+)', 'xabc', Subs, [capture_type(range)]).
-re_test(capture_range2, [true(Subs == re_match{0:0-3, 1:0-1, 2:1-1, 3:2-1}), fixme(issue_8)]) :-
+re_test(capture_range2, Subs == re_match{0:1-3, 1:1-1, 2:2-1, 3:3-1}) :-
     re_compile('(a+)(b+)(c+)', Re, [capture_type(range)]),
     re_matchsub(Re, 'xabc', Subs, []).
-re_test(capture_atom2, [true(Subs == re_match{0:"Name: value", value:'value'}), fixme(global_capture_type)]) :-
+re_test(capture_range3, Subs == re_match{0:1-3, 1:1-1, 2:2-1, 3:3-1}) :-
+    re_matchsub('(a+)(b+)(c+)'/r, 'xabc', Subs).
+re_test(capture_atom2, Subs == re_match{0:'Name: value', value:'value'}) :-
     re_matchsub(".*:\\s(?<value>.*)", "Name: value", Subs, [extended(true), capture_type(atom)]).
 
 re_test(split, Split == ["","a","b","aa","c"]) :-
@@ -174,18 +176,23 @@ re_test(split, Split == ["","a","b","aa","c"]) :-
 
 re_test(replace1, NewString == "Abaac") :-
     re_replace("a+", "A", "abaac", NewString).
-re_test(replace2, NewString == "A1ba2a3c") :-
+re_test(replace2a, NewString == "A1ba2a3c") :-
     re_replace("a(\\d)", "A\\1", "a1ba2a3c", NewString).
+re_test(replace2b, NewString == "A1ba2a3c") :-
+    re_replace("a(\\d)", "A$1", "a1ba2a3c", NewString).
+re_test(replace2c, NewString == "A1ba2a3c") :-
+    re_replace("a(\\d)", "A${1}", "a1ba2a3c", NewString).
+re_test(replace2d, NewString == "A1ba2a3c") :-
+    re_replace("a(\\d)", "A\\{1}", "a1ba2a3c", NewString).
 re_test(replace_all1, NewString == "AbAc") :-
     re_replace("a+"/g, "A", "abaac", NewString).
 re_test(replace_all2a, NewString == 'XbXc') :-
     re_replace("a+"/gia, "X", "AbaAc", NewString).
-re_test(replace_all2b, [fixme(global_capture_type),
-                        [NewString,NewString2] ==
-                       ['XbXXc',"AbXAc"]]) :-
-    re_replace("a+", "X", "AbaAc", NewString, [caseless(true),capture_type(atom)]),
-    re_replace("a+", "X", "AbaAc", NewString2).
-re_test(replace_all2c, NewString == "A1bA2A3c") :-
+re_test(replace_all2b, NewString == 'XbXc') :-
+    re_replace("a+"/ga, "X", "AbaAc", NewString, [caseless(true)]).
+re_test(replace_all2c, [fixme(global_capture_type), NewString == 'XbXc']) :-
+    re_replace("a+"/g, "X", "AbaAc", NewString, [caseless(true), capture_type(atom)]).
+re_test(replace_all3, NewString == "A1bA2A3c") :-
     re_replace("a(\\d)"/g, "A\\1", "a1ba2a3c", NewString).
 re_test(replace_none, NewString == "a1ba2a3c") :-
     re_replace("x(\\d)"/g, "A\\1", "a1ba2a3c", NewString).
@@ -205,6 +212,14 @@ re_test(replace_unicode3,
       true(NewString == "網目へび [àmímé níshíkíhéꜜbì]")]) :-
     re_replace("[蛇錦]+", "へび",
 	       "網目錦蛇 [àmímé níshíkíhéꜜbì]", NewString).
+re_test(replace_name1a, NewString == "[a][b][c]") :-
+    re_replace("(?<any>.)"/g, "[$any]", "abc", NewString).
+re_test(replace_name1b, NewString == "[a][b][c]") :-
+    re_replace("(?<any>.)"/g, "[\\any]", "abc", NewString).
+re_test(replace_name1c, NewString == "[a][b][c]") :-
+    re_replace("(?<any>.)"/g, "[${any}]", "abc", NewString).
+re_test(replace_name1d, NewString == "[a][b][c]") :-
+    re_replace("(?<any>.)"/g, "[\\{any}]", "abc", NewString).
 
 re_test(config_not_compound1, error(type_error(compound,version(A,B)),_)) :-
     re_config(version(A,B)).
@@ -275,13 +290,25 @@ re_test(config_stackrecurse) :-
     re_config(stackrecurse(V)),
     must_be(boolean, V).
 
-re_test(compile_config_0,
-     RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING])") :-
+re_test(compile_portray_0,
+        RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=0)") :-
     re_compile(".", Regex, []),
+    pcre:'$re_portray_string'(Regex, RegexStr).
+re_test(compile_portray_1a,
+        RegexStr == "<regex>(/(.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=1 {0:CAP_STRING 1:CAP_STRING})") :-
+    re_compile("(.)", Regex, []),
+    pcre:'$re_portray_string'(Regex, RegexStr).
+re_test(compile_portray_1b,
+        RegexStr == "<regex>(/(.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_ATOM] $capture=1 {0:CAP_ATOM 1:CAP_ATOM})") :-
+    re_compile("(.)", Regex, [capture_type(atom)]),
+    pcre:'$re_portray_string'(Regex, RegexStr).
+re_test(compile_portray_2,
+        RegexStr == "<regex>(/(?<foo>.)([a-z]*)(?<bar_A>.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=3 {0:CAP_STRING 1:foo:CAP_STRING 2:CAP_STRING 3:bar:CAP_ATOM})") :-
+    re_compile("(?<foo>.)([a-z]*)(?<bar_A>.)", Regex, []),
     pcre:'$re_portray_string'(Regex, RegexStr).
 
 re_test(compile_config_1,
-     RegexStr == "<regex>(/./ [ANCHORED CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED EXTRA FIRSTLINE JAVASCRIPT_COMPAT MULTILINE NO_AUTO_CAPTURE NO_UTF8_CHECK UCP UNGREEDY UTF8 BSR_ANYCRLF NEWLINE_CRLF CAP_RANGE])") :-
+     RegexStr == "<regex>(/./ [ANCHORED CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED EXTRA FIRSTLINE JAVASCRIPT_COMPAT MULTILINE NO_AUTO_CAPTURE NO_UTF8_CHECK UCP UNGREEDY UTF8 BSR_ANYCRLF NEWLINE_CRLF CAP_RANGE] $capture=0)") :-
     re_compile('.',  Regex,
 	       [anchored(true),
 		auto_capture(false),
@@ -304,7 +331,7 @@ re_test(compile_config_1,
     pcre:'$re_portray_string'(Regex, RegexStr).
 
 re_test(compile_config_1_inverse,
-     RegexStr == "<regex>(/./ [JAVASCRIPT_COMPAT NO_UTF8_CHECK UTF8 BSR_UNICODE NEWLINE_CR CAP_RANGE])") :-
+     RegexStr == "<regex>(/./ [JAVASCRIPT_COMPAT NO_UTF8_CHECK UTF8 BSR_UNICODE NEWLINE_CR CAP_RANGE] $capture=0)") :-
     re_compile('.', Regex,
 	       [anchored(false),
 		auto_capture(true),
@@ -353,12 +380,12 @@ re_test(compile_config_1_inverse,
     pcre:'$re_portray_string'(Regex, RegexStr).
 
 re_test(compile_config_2,
-     RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_ATOM])") :-
+     RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_ATOM] $capture=0)") :-
     re_compile('.', Regex, [multiline(false),caseless(false),capture_type(atom),foo]),
     pcre:'$re_portray_string'(Regex, RegexStr).
 
 re_test(compile_config_3,
-     RegexStr == "<regex>(/./ [CASELESS MULTILINE NO_UTF8_CHECK UTF8 NEWLINE_LF CAP_TERM])") :-
+     RegexStr == "<regex>(/./ [CASELESS MULTILINE NO_UTF8_CHECK UTF8 NEWLINE_LF CAP_TERM] $capture=0)") :-
     re_compile('.', Regex, [qqsv,zot(123),optimise(false),capture_type(term),multiline(true),caseless(true),newline(lf)]),
     pcre:'$re_portray_string'(Regex, RegexStr).
 
@@ -367,7 +394,7 @@ re_test(compile_config_4, error(type_error(option, newline(qqsv)), _)) :-
 
 re_test(compile_exec_1,
      [RegexStr,  MatchOptsStr, Sub, Sub2] ==
-     ["<regex>(/./ [ANCHORED NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING])",
+     ["<regex>(/./ [ANCHORED NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=0)",
       "NOTBOL NOTEMPTY NOTEMPTY_ATSTART NOTEOL NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0",
       re_match{0:"a"},
       re_match{0:"b"}]) :-
@@ -391,8 +418,37 @@ re_test(match_ok_start, Sub==re_match{0:"c"}) :-
     re_matchsub('.', "abc", Sub, [start(2)]).
 re_test(match_bad_start1, error(domain_error(offset,-1),_)) :- % TODO: -1 vs 3
     re_matchsub('.', "abc", _Sub, [start(3)]).
-re_test(match_bad_start2, error(type_error(option,start=3),_)) :-
+re_test(match_bad_start2,  error(type_error(option,start=3),_)) :-
     re_matchsub('.', "abc", _Sub, [start=3]).
+
+re_test(replace_bad_ref_1, error(existence_error(key,1,re_match{0:0-1}),_)) :-
+    re_replace(".", "$1", "abc", _).
+re_test(replace_bad_ref_2, error(existence_error(key,1,re_match{0:0-1,foo:0-1}),_)) :-
+    re_replace("(?<foo>.)", "$1", "abc", _).
+re_test(replace_bad_ref_3, error(existence_error(key,foob,re_match{0:0-1,foo:0-1}),_)) :-
+    re_replace("(?<foo>.)", "${foob}", "abc", _).
+re_test(replace_bad_ref_4, [blocked(re_match_range), Result == "xabc"]) :-
+    % See document: `?<foo_A>` - the "_A" suffix isn't allowed.
+    % TODO: This should throw an error but instead might  give weird results.
+    re_replace("(?<foo_A>.)", "${foo}", "xabc", Result).
+
+re_test(replace_escape_dollar1a, Result == "$bc") :-
+    re_replace(".", "$$", "abc", Result).
+re_test(replace_escape_dollar1b, [fixme(capture_type_atom), Result == '$bc']) :-
+    re_replace(".", "$$", "abc", Result, [capture_type(atom)]).
+re_test(replace_escape_dollar1c, Result == '$bc') :-
+    re_replace("."/a, "$$", "abc", Result).
+re_test(replace_escape_dollar2, Result == "$bbc") :-
+    re_replace(".(.)", "$$$1$1", "abc", Result).
+re_test(replace_escape_dollar3, Result == "x$y$zb$bc") :-
+    re_replace(".(.)", "x$$y$$z$1$$$1", "abc", Result).
+% Doubled "\"s because of SWI-Prolog string escaping rules:
+re_test(replace_escape_backslash1, Result == "\\bc") :-
+    re_replace(".", "\\\\", "abc", Result).
+re_test(replace_escape_backslash2, Result == "\\bbc") :-
+    re_replace(".(.)", "\\\\\\1\\1", "abc", Result).
+re_test(replace_escape_backslash3, Result == "x\\y\\zb\\bc") :-
+    re_replace(".(.)", "x\\\\y\\\\z\\1\\\\\\1", "abc", Result).
 
 re_test(cached_compile_1a) :-
     re_compile('b', Re1, [caseless(true)]),
@@ -410,6 +466,25 @@ re_test(cached_compile_1c) :- % as cached_compile_1b but ensure no caching
     assertion(   re_match('b', "ABC", [caseless(true)])),
     re_flush,
     assertion(\+ re_match('b', "ABC", [caseless(false)])).
+
+% Tests from Wouter Beek (https://github.com/SWI-Prolog/packages-pcre/issues/5#issuecomment-1019583301)
+re_test(wb_1) :-
+    re_replace("^(.*?)d(.*)$", "$1c$2", "darted", X),
+    assertion(X == "carted").
+
+% Cannot be specified in the SWI library
+% <https://github.com/SWI-Prolog/packages-pcre/issues/5>.
+%
+% I'm not sure why "cd" appears after the "]", but this is how it is
+% specified in the XPath standard:
+% <https://www.w3.org/TR/xpath-functions/#func-replace>
+re_test(wb_2, fixme(javascript_compat)) :-
+    re_replace("(ab)|(a)", "[1=$1][2=$2]", "abcd", Result, [compat(javascript)]),
+    assertion(Result == "[1=ab][2=]cd").
+
+% Fix for https://github.com/SWI-Prolog/packages-pcre/issues/6
+re_test(wb_3, Result == "abbraccaddabbra") :-
+    re_replace("a(.)"/g, "a$1$1", "abracadabra", Result).
 
 :- end_tests(pcre).
 
