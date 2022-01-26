@@ -11,6 +11,9 @@
 # - Find pcre
 # Find the native PCRE headers and libraries.
 #
+#   NOTE: PCRE_FOUND refers to library(pcre) [Prolog package]
+#         PCRE_LIBRARIES, PCRE_INCLUDE_DIRS refer to the foreign code (libpcre2-8.so etc)
+#
 # PCRE_INCLUDE_DIRS	- where to find pcre.h, etc.
 # PCRE_LIBRARIES	- List of libraries when using pcre.
 # PCRE_FOUND		- True if pcre found.

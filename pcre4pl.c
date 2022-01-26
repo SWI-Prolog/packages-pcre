@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2017-2020, VU University Amsterdam
+    Copyright (c)  2017-2022, VU University Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -117,19 +117,14 @@ re_free(re_data *re)
 
 static functor_t FUNCTOR_pair2;		/* -/2 */
 
-static atom_t ATOM_optimise;		/* Optimise */
+/* Each ATOM_xxx definitions has a corresponding MKATOM(xxx) in
+   install_pcre4pl(). */
+static atom_t ATOM_optimise;
 static atom_t ATOM_optimize;
 static atom_t ATOM_bsr;
-static atom_t ATOM_anycrlf;
-static atom_t ATOM_unicode;
 static atom_t ATOM_compat;
 static atom_t ATOM_javascript;
 static atom_t ATOM_newline;
-static atom_t ATOM_any;
-static atom_t ATOM_anycrlf;
-static atom_t ATOM_cr;
-static atom_t ATOM_lf;
-static atom_t ATOM_crlf;
 static atom_t ATOM_start;
 static atom_t ATOM_capture_type;
 static atom_t ATOM_string;
@@ -308,10 +303,10 @@ effective_bool(term_t arg)
 
 
 static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
-set_flag(term_t arg, int *flags, int mask, int value, int invert, int *seen)
-{ *flags &= mask;
-  if ( *seen&value )
+set_flag(term_t arg, unsigned *flags, int mask, int value, int invert, unsigned *seen)
+{ if ( *seen&value )
     return TRUE; /* repeated option - ignore */
+  *flags &= mask;
   *seen |= value;
   switch( effective_bool(arg) )
   { case TRUE:
@@ -334,8 +329,8 @@ set_flag(term_t arg, int *flags, int mask, int value, int invert, int *seen)
 
 typedef struct re_optdef
 { const char *name;
-  int	      flag;
-  int	      mode;
+  unsigned    flag;
+  unsigned    mode; /* RE_COMP, RE_EXEC, RE_NEG */
   atom_t      atom; /* Filled in as-needed by lookup_optdef() */
 } re_optdef;
 
@@ -345,7 +340,7 @@ typedef struct re_optdef
 
 
 static const re_optdef*
-lookup_optdef(re_optdef opt_defs[], atom_t name, int mode)
+lookup_optdef(re_optdef opt_defs[], atom_t name, unsigned mode)
 { re_optdef *def;
   for(def=opt_defs; def->name; def++)
   { if ( !def->atom ) /* lazily fill in atoms in lookup table */
@@ -358,9 +353,9 @@ lookup_optdef(re_optdef opt_defs[], atom_t name, int mode)
 
 
 static int/* bool (FALSE/TRUE), as returned by PL_..._error() */
-lookup_and_apply_optdef(re_optdef opt_defs[], atom_t name, int mode,
+lookup_and_apply_optdef(re_optdef opt_defs[], atom_t name, unsigned mode,
 			term_t option_term, term_t arg, int mask,
-			int *optp, int *seen)
+			unsigned *optp, unsigned *seen)
 { const re_optdef *def = lookup_optdef(opt_defs, name, mode);
   if ( def )
     return set_flag(arg, optp, mask, def->flag, def->mode&RE_NEG, seen);
@@ -428,65 +423,57 @@ get_arg_1_if_any(term_t head, atom_t *name, size_t *arity, term_t *arg)
 
 
 static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
-re_get_options(term_t options, int mode, int *optp,
+re_get_options(term_t options, unsigned mode, unsigned *optp,
 	       int (*func)(atom_t o, term_t a, void *ctx),
 	       void *ctx)
 { term_t tail = PL_copy_term_ref(options);
   term_t head = PL_new_term_ref();
-  int seen = 0;
-  int seen_bsr = FALSE;
-  int seen_newlines = FALSE;
+  unsigned seen = 0;
+  unsigned seen_bsr = FALSE;
+  unsigned seen_newlines = FALSE;
   *optp = PCRE_NEWLINE_ANYCRLF|PCRE_NO_UTF8_CHECK;
 
   while(PL_get_list_ex(tail, head, tail))
   { atom_t name;
     size_t arity;
     term_t arg;
-    if ( get_arg_1_if_any(head, &name, &arity, &arg) )
-    { if ( name == ATOM_bsr && arg )
-      { atom_t aval;
-	if ( seen_bsr )
-	  return TRUE;
-	seen_bsr = TRUE;
-	if ( !PL_get_atom_ex(arg, &aval) ||
-	     !lookup_and_apply_optdef(re_optbsrs, aval, RE_COMP,
-				      head, 0, ~OPTBSR_MASK, optp, &seen) )
+    if ( ! get_arg_1_if_any(head, &name, &arity, &arg) )
+      return FALSE;
+    if ( name == ATOM_bsr && arg && (mode&RE_COMP) && !seen_bsr )
+    { atom_t aval;
+      seen_bsr = TRUE;
+      if ( !PL_get_atom_ex(arg, &aval) ||
+	   !lookup_and_apply_optdef(re_optbsrs, aval, RE_COMP,
+				    head, 0, ~OPTBSR_MASK, optp, &seen) )
+	return FALSE;
+    } else if ( name == ATOM_newline && arg && (mode&RE_COMP) && !seen_newlines )
+    { atom_t aval;
+      seen_newlines = TRUE;
+      if (!PL_get_atom_ex(arg, &aval) ||
+	  !lookup_and_apply_optdef(re_optnewlines, aval, RE_COMP,
+				   head, 0, ~OPTNEWLINE_MASK, optp, &seen) )
+	return FALSE;
+    } else if ( name == ATOM_compat && arg && (mode&RE_COMP) && !(seen&PCRE_JAVASCRIPT_COMPAT) )
+    { atom_t aval;
+      seen |= PCRE_JAVASCRIPT_COMPAT;
+      /* No need for a mask - the only flag option is positive */
+      if ( !PL_get_atom_ex(arg, &aval) )
+	return FALSE;
+      if ( aval == ATOM_javascript )
+	*optp |= PCRE_JAVASCRIPT_COMPAT;
+      else
+	return PL_domain_error("compat_option", arg);
+    } else
+    { const re_optdef *def = lookup_optdef(re_optdefs, name, mode);
+      if ( def )
+      { if ( !set_flag(arg, optp, ~def->flag, def->flag, def->mode&RE_NEG, &seen) )
 	  return FALSE;
-      } else if ( name == ATOM_newline && arg )
-      { atom_t aval;
-	if ( seen_newlines )
-	  return TRUE;
-	seen_newlines = TRUE;
-	if (!PL_get_atom_ex(arg, &aval) ||
-	    !lookup_and_apply_optdef(re_optnewlines, aval, RE_COMP,
-				     head, 0, ~OPTNEWLINE_MASK, optp, &seen) )
-	  return FALSE;
-      } else if ( name == ATOM_compat && arg && mode&RE_COMP )
-      { atom_t aval;
-	if ( seen&PCRE_JAVASCRIPT_COMPAT )
-	  continue;
-	seen |= PCRE_JAVASCRIPT_COMPAT;
-	/* No need for a mask - the only flag option is positive */
-	if ( !PL_get_atom_ex(arg, &aval) )
-	  return FALSE;
-	if ( aval == ATOM_javascript )
-	  *optp |= PCRE_JAVASCRIPT_COMPAT;
-	else
-	  return PL_domain_error("compat_option", arg);
-      } else
-      { const re_optdef *def = lookup_optdef(re_optdefs, name, mode);
-	if ( def )
-	{ if ( !set_flag(arg, optp, ~def->flag, def->flag, def->mode&RE_NEG, &seen) )
-	    return FALSE;
-	} else if ( func )
-	{  if ( !(*func)(name, arg, ctx) )
+      } else if ( func )
+	{ if ( !(*func)(name, arg, ctx) )
 	    return FALSE;
 	} else
 	{  return PL_type_error("option", head);
 	}
-      }
-    } else /* !get_arg_1_if_any() */
-    { return FALSE;
     }
   }
 
@@ -798,7 +785,7 @@ static foreign_t
 re_compile(term_t pat, term_t reb, term_t options)
 { size_t len;
   char *pats;
-  int re_options;
+  unsigned re_options;
   re_compile_options copts = {0, CAP_STRING};
   pcre *pcre;
   int re_error_code;
@@ -880,7 +867,7 @@ re_match_opt(atom_t opt, term_t arg, void *ctx)
 /* This function probably isn't needed -- it's just in case the re_options have
    somehow incorporated the compile options. */
 static void
-re_match_opt_postprocess(int *re_options)
+re_match_opt_postprocess(unsigned *re_options)
 { /* We must *not* "or" the options from regex with the
      match options -- see the pcre_exec() documentation.
        "The only bits that may be set are
@@ -896,10 +883,10 @@ re_match_opt_postprocess(int *re_options)
 	   and PCRE_PARTIAL_SOFT."
   */
   *re_options &= (PCRE_ANCHORED|PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|
-                  PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF|
-                  PCRE_NOTBOL|PCRE_NOTEOL|PCRE_NOTEMPTY| PCRE_NOTEMPTY_ATSTART|
-                  PCRE_NO_START_OPTIMIZE|PCRE_NO_UTF8_CHECK|PCRE_PARTIAL_HARD|
-                  PCRE_PARTIAL_SOFT);
+		  PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF|
+		  PCRE_NOTBOL|PCRE_NOTEOL|PCRE_NOTEMPTY| PCRE_NOTEMPTY_ATSTART|
+		  PCRE_NO_START_OPTIMIZE|PCRE_NO_UTF8_CHECK|PCRE_PARTIAL_HARD|
+		  PCRE_PARTIAL_SOFT);
 }
 
 
@@ -911,7 +898,7 @@ re_match_opt_postprocess(int *re_options)
 static foreign_t
 re_portray_match_options_(term_t stream, term_t options)
 { IOSTREAM *fd;
-  int re_options = 0;
+  unsigned re_options = 0;
   matchopts mopts = {0, FALSE};
   if ( !PL_get_stream(stream, &fd, SIO_OUTPUT) || !PL_acquire_stream(fd) )
     return FALSE;
@@ -969,14 +956,12 @@ put_capval(term_t t, re_data *re, re_subject *subject, int i, const int ovector[
       return PL_put_term_from_chars(t, REP_UTF8, len, s);
     case CAP_RANGE:
     { term_t av;
-      int rc;
       size_t start = bytep_to_charp(subject, ovector[i*2]);
       size_t end   = bytep_to_charp(subject, ovector[i*2+1]);
-
-      rc = ( (av=PL_new_term_refs(2)) &&
-	      PL_put_integer(av+0, start) &&
-	      PL_put_integer(av+1, end-start) &&
-	      PL_cons_functor_v(t, FUNCTOR_pair2, av) );
+      int rc = ( (av=PL_new_term_refs(2)) &&
+		  PL_put_integer(av+0, start) &&
+		  PL_put_integer(av+1, end-start) &&
+		  PL_cons_functor_v(t, FUNCTOR_pair2, av) );
       if ( av )
 	PL_reset_term_refs(av);
       return rc;
@@ -997,7 +982,7 @@ unify_match(term_t t, re_data *re, re_subject *subject,
   term_t caps = av+1;
   term_t pair = av+2;
   term_t list = av+3;
-  (void) opts;  /* TODO: remove because unused? */
+  (void)opts;  /* TODO: remove because unused? */
 
   PL_put_nil(list);
   for(i=ovsize-1; i>=0; i--)
@@ -1116,8 +1101,8 @@ re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
 { re_data *re;
   re_subject subject = { NULL, 0, 0, 0, 0 };
   matchopts opts = {0};
-  int re_options;
-  int flags = 0;
+  unsigned re_options;
+  unsigned flags = 0;
 
   if ( !re_get_options(options, RE_EXEC, &re_options, re_match_opt, &opts) )
     return FALSE;
@@ -1125,7 +1110,7 @@ re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
 
   if ( get_re(regex, &re) &&
        re_get_subject(on, &subject, flags) )
-  { int rc;
+  { int rc; /* Every path (to label out) must set rc */
     int ovecbuf[30];
     int ovecsize = 30;
     int *ovector;
@@ -1153,14 +1138,14 @@ re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
 	   PCRE_NOTEMPTY_ATSTART,
 	   PCRE_NO_START_OPTIMIZE,
 	   PCRE_NO_UTF8_CHECK,
-	   PCRE_PARTIAL_HARD,
-	   and PCRE_PARTIAL_SOFT."
+	   PCRE_PARTIAL_HARD, and
+	   PCRE_PARTIAL_SOFT."
     */
     re_options &= (PCRE_ANCHORED|PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|
-                   PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF|
-                   PCRE_NOTBOL|PCRE_NOTEOL|PCRE_NOTEMPTY| PCRE_NOTEMPTY_ATSTART|
-                   PCRE_NO_START_OPTIMIZE|PCRE_NO_UTF8_CHECK|PCRE_PARTIAL_HARD|
-                   PCRE_PARTIAL_SOFT);
+		   PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF|
+		   PCRE_NOTBOL|PCRE_NOTEOL|PCRE_NOTEMPTY| PCRE_NOTEMPTY_ATSTART|
+		   PCRE_NO_START_OPTIMIZE|PCRE_NO_UTF8_CHECK|PCRE_PARTIAL_HARD|
+		   PCRE_PARTIAL_SOFT);
     { int re_rc = pcre_exec(re->pcre, re->extra,
 			    subject.subject, subject.length,
 			    opts.start, re_options,
@@ -1210,7 +1195,7 @@ re_foldl_(term_t regex, term_t on,
 	  term_t options)
 { re_data *re;
   re_subject subject;
-  int re_options;
+  unsigned re_options;
   matchopts opts = {0};
 
   if ( !re_get_options(options, RE_EXEC, &re_options, re_match_opt, &opts) )
@@ -1219,7 +1204,7 @@ re_foldl_(term_t regex, term_t on,
 
   if ( get_re(regex, &re) &&
        re_get_subject(on, &subject, BUF_STACK) )
-  { int rc;
+  { int rc; /* Every path (to label out) must set rc */
     int ovecbuf[30];
     int ovecsize = 30;
     int *ovector;
@@ -1302,14 +1287,7 @@ install_pcre4pl(void)
   MKATOM(bsr);
   MKATOM(compat);
   MKATOM(javascript);
-  MKATOM(anycrlf);
-  MKATOM(unicode);
   MKATOM(newline);
-  MKATOM(any);
-  MKATOM(anycrlf);
-  MKATOM(cr);
-  MKATOM(lf);
-  MKATOM(crlf);
   MKATOM(start);
   MKATOM(capture_type);
   MKATOM(string);

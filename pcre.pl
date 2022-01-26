@@ -49,6 +49,7 @@
 :- autoload(library(apply),[maplist/3]).
 :- autoload(library(error),[must_be/2,existence_error/2]).
 :- autoload(library(dcg/basics),[string/3,eos/2,digit/3,digits/3]).
+:- autoload(library(lists), [append/3]).
 
 % The foreign language code (pcre4pl.c) defines:
 %    re_config/1,             % ?Config
@@ -555,7 +556,7 @@ alnum(L) -->
 %     If =true=, PCRE extra features (not much use currently)
 %     * firstline(Bool)
 %     If =true=, force matching to be before newline
-%     * greedY(Bool)
+%     * greedy(Bool)
 %     If =true=, operators such as `+` and `*` are greedy unles
 %     followed by `?`; if =false=, the operators are not greedy
 %     and `?` has the opposite meaning.
