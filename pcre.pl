@@ -480,18 +480,9 @@ parts_to_output(atom, Parts, String) :-
 %   it's used by re_replace/5 to cache the results of processing the
 %   `With` argument.
 
-:- dynamic replacement_cache/2.  % replacement_cache(+With, -Compiled)
-:- volatile replacement_cache/2.
+:- table compile_replacement/2 as shared.
 
-compile_replacement(With, Compiled) :-
-    replacement_cache(With, Compiled),
-    !.
-compile_replacement(With, Compiled) :-
-    compile_replacement_nocache(With, Compiled),
-    % DO NOT SUBMIT - use tabling
-    assertz(replacement_cache(With, Compiled)).
-
-compile_replacement_nocache(With, r(Parts, Extract)) :-
+compile_replacement(With, r(Parts, Extract)) :-
     string_codes(With, Codes),
     phrase(replacement_parts(Parts, Pairs), Codes),
     % The Pairs is Key-Value pairs, but a Key might be duplicated.
@@ -663,8 +654,7 @@ alnum(L) -->
 %   Create a compiled regex from a specification.  Cached compiled
 %   regular expressions can be reclaimed using re_flush/0.
 
-:- dynamic re_compiled_cache/3.  % re_compiled_cache(+Text, +Regex, +Options)
-:- volatile re_compiled_cache/3.
+:- table re_compile/3 as shared.
 
 re_compiled(Regex, Regex, _Options) :-
     blob(Regex, regex),
@@ -674,12 +664,7 @@ re_compiled(Text/Flags, Regex, Options) :- !,
     must_be(atom, Flags),
     re_flags_options(Flags, Options0),
     append(Options0, Options, Options2),
-    (   re_compiled_cache(Text, Regex, Options2)
-    ->  true
-    ;   re_compile(Text, Regex, Options2),
-        % DO NOT SUBMIT - use tabling
-        assertz(re_compiled_cache(Text, Flags, Regex))
-    ).
+    re_compile(Text, Regex, Options2).
 re_compiled(Text, Regex, Options) :-
     re_compiled(Text/'', Regex, Options).
 
@@ -708,8 +693,7 @@ re_flag_option_(t, capture_type(term)).
 %   @tbd Flush automatically if the cache becomes too large.
 
 re_flush :-
-    retractall(replacement_cache(_,_)),
-    retractall(re_compiled_cache(_,_,_)).
+    abolish_module_tables(pcre).
 
 %!  re_config(+Term)
 %
