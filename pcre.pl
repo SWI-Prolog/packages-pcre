@@ -168,9 +168,11 @@ cache. The cache can be cleared using re_flush/0.
 %     - *t*: capture_type(term)
 %
 %   If Regex is the output of re_compile/3, any compile-time options
-%   in Options are ignored and only match-time options are used. The
-%   options that are derived from flags take precedence over the
-%   options in the Options list.
+%   in Options are ignored and only match-time options are used.
+%
+%   The options that are derived from flags take precedence over the
+%   options in the Options list. In the case of conflicting flags,
+%   the first one is used (e.g., =ra= results in =capture_type(range)=).
 
 re_match(Regex, String) :-
     re_match(Regex, String, []).
@@ -204,6 +206,7 @@ re_match(Regex, String, Options) :-
 %   @arg Options Only _execution_ options are processed.  See re_match/3
 %   for the set of options.  _Compilation_ options must be passed as
 %   `/flags` to Regex.
+%
 %   @arg Regex  See re_match/2 for a description of this argument.
 
 re_matchsub(Regex, String, Subs) :-
@@ -283,31 +286,33 @@ re_call_folder(Goal, Pairs, V0, V1) :-
 re_split(Pattern, String, Split) :-
     re_split(Pattern, String, Split, []).
 re_split(Pattern, String, Split, Options) :-
-    split_range_regex(Pattern, Compiled, Type),
+    split_range_regex(Pattern, Compiled, Type, Options),
     State = state(String, 0, Type),
     re_foldl(split(State), Compiled, String, Split, [Last], Options),
     arg(2, State, LastSkipStart),
     typed_sub(Type, String, LastSkipStart, _, 0, Last).
 
-split_range_regex(Pattern/Flags, Compiled, Type) =>
-    atom_chars(Flags, Chars),
-    replace_flags(Chars, Chars1, Type),
-    atom_chars(RFlags, [r|Chars1]),
-    re_flags_options(RFlags, Options),
-    re_compiled(Pattern/RFlags, Compiled, Options).
-split_range_regex(Pattern, Compiled, Type) =>
-    Type = string,
-    re_flags_options(r, Options), % Pattern/r
-    re_compiled(Pattern, Compiled, Options).
+split_range_regex(Pattern/Flags, Compiled, Type, Options) =>
+    split_range_regex(Pattern, Flags, Compiled, Type, Options).
+split_range_regex(Pattern, Compiled, Type, Options) =>
+    split_range_regex(Pattern, '', Compiled, Type, Options).
 
-replace_flags([], [], Type) :-
+split_range_regex(Pattern, Flags, Compiled, Type, Options) =>
+    regex_capture_type_flag_chars(Options, Flags, Chars),
+    split_flags(Chars, Chars1, Type),
+    atom_chars(RFlags, [r|Chars1]),
+    re_flags_options(RFlags, ROptions),
+    append(ROptions, Options, Options2),
+    re_compiled(Pattern/RFlags, Compiled, Options2).
+
+split_flags([], [], Type) :-
     default(Type, string).
-replace_flags([H|T0], T, Type) :-
+split_flags([H|T0], T, Type) :-
     split_type(H, Type),
     !,
-    replace_flags(T0, T, Type).
-replace_flags([H|T0], [H|T], Type) :-
-    replace_flags(T0, T, Type).
+    split_flags(T0, T, Type).
+split_flags([H|T0], [H|T], Type) :-
+    split_flags(T0, T, Type).
 
 split_type(a, atom).
 split_type(s, string).
@@ -346,22 +351,30 @@ typed_sub(name, Haystack, B, L, A, Value) :-
 %
 %   Throws an error if With uses a name that doesn't exist in the Pattern.
 %
-%   @arg Pattern is the pattern  text,   optionally  follows  by /Flags.
-%   Flags may include `g`,  replacing  all   occurences  of  Pattern. In
-%   addition, similar to re_matchsub/4, the  final   output  type can be
-%   controlled by a flag =a= (atom) or =s= (string, default).
-%   Names in the pattern must not have a capture type suffix
-%   (e.g., =(?<foo_A>.)= is not allowed but =(?<foo>.)= is allowed.
+%   @arg Pattern is the pattern text, optionally follows by /Flags.
+%   Flags may include `g`, replacing all occurences of Pattern. In
+%   addition, similar to re_matchsub/4, the final output type can be
+%   controlled by a flag =a= (atom) or =s= (string, default).  The
+%   output type can also be specified by the =capture_type= option.
+%   Capture type suffixes are checked for validity but otherwise
+%   ignored (e.g., =(?<foo_A>.)= is the same as (?<foo>.)= but
+%   =(?<foo_X>)= is an error.)
+%
 %   @arg With is the replacement text. It may reference captured
 %   substrings using \N or $Name. Both N and Name may be written as
-%   {N} and {Name} to avoid ambiguities. If a substring is named,
-%   it cannot be referenced by its number. The single chracters =$=
-%   and =\= can be escaped by doubling (e.g.,
-%   =re_replace(".","$$","abc",Replaced)=
-%   results in =Replaced="$bc"=). (Because =\= is an escape
-%   character inside strings, you need to write "\\\\" to get
-%   a single backslash.)
+%   {N} and {Name} to avoid ambiguities. If a substring is named, it
+%   cannot be referenced by its number. The single chracters =$= and
+%   =\= can be escaped by doubling (e.g.,
+%   =re_replace(".","$$","abc",Replaced)= results in
+%   =Replaced="$bc"=). (Because =\= is an escape character inside
+%   strings, you need to write "\\\\" to get a single backslash.)
+%
 %   @arg Options See re_match/3 for the set of options.
+%
+%   The options that are derived from flags take precedence over the
+%   options in the Options list. In the case of conflicting flags,
+%   the first one is used (e.g., =as= results in =capture_type(string)=).
+%   If a =capture_type= is meaningless (=range= or =term=), it is ignored.
 
 re_replace(Pattern, With, String, NewString) :-
     re_replace(Pattern, With, String, NewString, []).
@@ -384,18 +397,27 @@ re_replace(Pattern, With, String, NewString, Options) :-
         parts_to_output(Type, Parts, NewString)
     ).
 
+regex_capture_type_flag_chars(Options, Flags, Chars) :-
+    atom_chars(Flags, Chars0),
+    % Could do delete(Options, capture_type(_), ...)
+    % but no need because Flags take precedence and first
+    % occurence of an option in Options takes precedence.
+    (   memberchk(capture_type(T), Options), type(TFlag, T)
+    ->  append(Chars0, [TFlag], Chars)
+    ;   Chars = Chars0
+    ).
+
 %! replace_range_regex(+Pattern, -Compiled, -All, -Type, +Options) is det.
 replace_range_regex(Pattern/Flags, Compiled, All, Type, Options) =>
-    atom_chars(Flags, Chars),
+    replace_range_regex(Pattern, Flags, Compiled, All, Type, Options).
+replace_range_regex(Pattern, Compiled, All, Type, Options) =>
+    replace_range_regex(Pattern, '', Compiled, All, Type, Options).
+
+replace_range_regex(Pattern, Flags, Compiled, All, Type, Options) =>
+    regex_capture_type_flag_chars(Options, Flags, Chars),
     replace_flags(Chars, Chars1, All, Type),
     atom_chars(RFlags, [r|Chars1]),
     re_flags_options(RFlags, ROptions),
-    append(ROptions, Options, Options2),
-    re_compiled(Pattern, Compiled, Options2).
-replace_range_regex(Pattern, Compiled, All, Type, Options) =>
-    All = first,
-    Type = string,
-    re_flags_options(r, ROptions), % Pattern/r
     append(ROptions, Options, Options2),
     re_compiled(Pattern, Compiled, Options2).
 
@@ -466,6 +488,7 @@ compile_replacement(With, Compiled) :-
     !.
 compile_replacement(With, Compiled) :-
     compile_replacement_nocache(With, Compiled),
+    % DO NOT SUBMIT - use tabling
     assertz(replacement_cache(With, Compiled)).
 
 compile_replacement_nocache(With, r(Parts, Extract)) :-
@@ -654,6 +677,7 @@ re_compiled(Text/Flags, Regex, Options) :- !,
     (   re_compiled_cache(Text, Regex, Options2)
     ->  true
     ;   re_compile(Text, Regex, Options2),
+        % DO NOT SUBMIT - use tabling
         assertz(re_compiled_cache(Text, Flags, Regex))
     ).
 re_compiled(Text, Regex, Options) :-

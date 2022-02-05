@@ -171,31 +171,45 @@ re_test(capture_range3, Subs == re_match{0:1-3, 1:1-1, 2:2-1, 3:3-1}) :-
 re_test(capture_atom2, Subs == re_match{0:'Name: value', value:'value'}) :-
     re_matchsub(".*:\\s(?<value>.*)", "Name: value", Subs, [extended(true), capture_type(atom)]).
 
-re_test(split, Split == ["","a","b","aa","c"]) :-
-    re_split("a+", "abaac", Split, []).
+re_test(split_1, Split == ["","a","b","aa","c"]) :-
+    re_split("a+", "abaac", Split).
+re_test(split_2, Split == ['','a','b','aa','c']) :-
+    re_split("a+"/a, "abaac", Split).
+re_test(split_3, Split == ['','a','b','aa','c']) :-
+    re_split("a+", "abaac", Split, [capture_type(atom)]).
 
 re_test(replace1, NewString == "Abaac") :-
     re_replace("a+", "A", "abaac", NewString).
-re_test(replace2a, NewString == "A1ba2a3c") :-
-    re_replace("a(\\d)", "A\\1", "a1ba2a3c", NewString).
-re_test(replace2b, NewString == "A1ba2a3c") :-
-    re_replace("a(\\d)", "A$1", "a1ba2a3c", NewString).
-re_test(replace2c, NewString == "A1ba2a3c") :-
-    re_replace("a(\\d)", "A${1}", "a1ba2a3c", NewString).
-re_test(replace2d, NewString == "A1ba2a3c") :-
-    re_replace("a(\\d)", "A\\{1}", "a1ba2a3c", NewString).
+re_test(replace2a, NewString == "A[1]ba2a3c") :-
+    re_replace("a(\\d)", "A[\\1]", "a1ba2a3c", NewString).
+re_test(replace2b, NewString == "A[1]ba2a3c") :-
+    re_replace("a(\\d)", "A[$1]", "a1ba2a3c", NewString).
+re_test(replace2c, NewString == "A[1]ba2a3c") :-
+    re_replace("a(\\d)", "A[${1}]", "a1ba2a3c", NewString).
+re_test(replace2d, NewString == "A[1]ba2a3c") :-
+    re_replace("a(\\d)", "A[\\{1}]", "a1ba2a3c", NewString).
 re_test(replace_all1, NewString == "AbAc") :-
     re_replace("a+"/g, "A", "abaac", NewString).
 re_test(replace_all2a, NewString == 'XbXc') :-
     re_replace("a+"/gia, "X", "AbaAc", NewString).
 re_test(replace_all2b, NewString == 'XbXc') :-
     re_replace("a+"/ga, "X", "AbaAc", NewString, [caseless(true)]).
-re_test(replace_all2c, [fixme(global_capture_type), NewString == 'XbXc']) :-
+re_test(replace_all2c, [NewString == 'XbXc']) :-
     re_replace("a+"/g, "X", "AbaAc", NewString, [caseless(true), capture_type(atom)]).
-re_test(replace_all3, NewString == "A1bA2A3c") :-
-    re_replace("a(\\d)"/g, "A\\1", "a1ba2a3c", NewString).
-re_test(replace_none, NewString == "a1ba2a3c") :-
-    re_replace("x(\\d)"/g, "A\\1", "a1ba2a3c", NewString).
+re_test(replace_all3, NewString == "A[1]bA[2]A[3]c") :-
+    re_replace("a(\\d)"/g, "A[\\1]", "a1ba2a3c", NewString).
+re_test(replace_none, NewString == "A[1]bA[2]A[3]c") :-
+    re_replace("a(\\d)"/g, "A[\\1]", "a1ba2a3c", NewString).
+re_test(replace_capture_type_error1, NewString == "A[1]bA[2]A[3]c") :- % capture_type ignored
+    re_replace("a(\\d)"/g, "A[\\1]", "a1ba2a3c", NewString, [capture_type(range)]).
+re_test(replace_capture_type_error2, NewString == "A[1]bA[2]A[3]c") :- % capture_type ignored
+    re_replace("a(\\d)"/g, "A[\\1]", "a1ba2a3c", NewString, [capture_type(term)]).
+re_test(replace_capture_type_precedence1, NewString == "A[1]bA[2]A[3]c") :-
+    re_replace("a(\\d)"/gs, "A[\\1]", "a1ba2a3c", NewString, [capture_type(atom)]).
+re_test(replace_capture_type_precedence2, NewString == 'A[1]bA[2]A[3]c') :-
+    re_replace("a(\\d)"/ga, "A[\\1]", "a1ba2a3c", NewString, [capture_type(string)]).
+re_test(replace_capture_type_precedence3, NewString == 'A[1]bA[2]A[3]c') :-
+    re_replace("a(\\d)"/gas, "A[\\1]", "a1ba2a3c", NewString, [capture_type(string)]).
 
 re_test(replace_unicode1,
      [condition(re_config(utf8(true))),
@@ -215,11 +229,13 @@ re_test(replace_unicode3,
 re_test(replace_name1a, NewString == "[a][b][c]") :-
     re_replace("(?<any>.)"/g, "[$any]", "abc", NewString).
 re_test(replace_name1b, NewString == "[a][b][c]") :-
-    re_replace("(?<any>.)"/g, "[\\any]", "abc", NewString).
+    re_replace("(?<any_A>.)"/g, "[\\any]", "abc", NewString).
 re_test(replace_name1c, NewString == "[a][b][c]") :-
     re_replace("(?<any>.)"/g, "[${any}]", "abc", NewString).
 re_test(replace_name1d, NewString == "[a][b][c]") :-
     re_replace("(?<any>.)"/g, "[\\{any}]", "abc", NewString).
+re_test(replace_name1e, error(existence_error(re_type_flag, 'X'), _)) :-
+    re_replace("(?<any_X>.)"/g, "[\\{any}]", "abc", _NewString).
 
 re_test(config_not_compound1, error(type_error(compound,version(A,B)),_)) :-
     re_config(version(A,B)).
@@ -467,17 +483,16 @@ re_test(cached_compile_1c) :- % as cached_compile_1b but ensure no caching
     re_flush,
     assertion(\+ re_match('b', "ABC", [caseless(false)])).
 
-% Tests from Wouter Beek (https://github.com/SWI-Prolog/packages-pcre/issues/5#issuecomment-1019583301)
-re_test(wb_1) :-
-    re_replace("^(.*?)d(.*)$", "$1c$2", "darted", X),
-    assertion(X == "carted").
+re_test(wb_1, NewString == "carted") :-
+    re_replace("^(.*?)d(.*)$", "$1c$2", "darted", NewString).
 
+% Test from Wouter Beek (https://github.com/SWI-Prolog/packages-pcre/issues/5#issuecomment-1019583301)
 % Cannot be specified in the SWI library
 % <https://github.com/SWI-Prolog/packages-pcre/issues/5>.
 %
+% https://www.w3.org/TR/xpath-functions/#func-replace
 % I'm not sure why "cd" appears after the "]", but this is how it is
 % specified in the XPath standard:
-% <https://www.w3.org/TR/xpath-functions/#func-replace>
 re_test(wb_2, fixme(javascript_compat)) :-
     re_replace("(ab)|(a)", "[1=$1][2=$2]", "abcd", Result, [compat(javascript)]),
     assertion(Result == "[1=ab][2=]cd").
