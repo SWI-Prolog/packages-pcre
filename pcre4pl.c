@@ -44,7 +44,7 @@
 		 *	      RE STRUCT		*
 		 *******************************/
 
-typedef enum cap_type
+typedef enum cap_type /* capture type */
 { CAP_DEFAULT = 0,
   CAP_STRING,
   CAP_ATOM,
@@ -55,7 +55,7 @@ typedef enum cap_type
   CAP_RANGE
 } cap_type;
 
-/* For debugging */
+/* For debugging - map cap_type to string */
 static const char *
 cap_type_str(int i)
 { switch( i )
@@ -71,7 +71,7 @@ cap_type_str(int i)
   }
 }
 
-typedef struct cap_how
+typedef struct cap_how /* capture "how" [name + type] */
 { atom_t	name; /* 0 if it's unnamed (referenced by number position) */
   cap_type	type;
 } cap_how;
@@ -161,7 +161,7 @@ compare_pcres(atom_t a, atom_t b)
 { re_data *rea = *(re_data**)PL_blob_data(a, NULL, NULL);
   re_data *reb = *(re_data**)PL_blob_data(b, NULL, NULL);
 
-  return ( rea > reb ?	1 :
+  return ( rea > reb ?  1 :
 	   reb < rea ? -1 : 0
 	 );
 }
@@ -169,8 +169,9 @@ compare_pcres(atom_t a, atom_t b)
 
 static int
 write_pcre(IOSTREAM *s, atom_t symbol, int flags)
-{ re_data *re = *(re_data**)PL_blob_data(symbol, NULL, NULL);
-  Sfprintf(s, "<regex>(%p)", re);	/* For details of the blob: re_portray() - '$re_portray'/2 */
+{ (void)flags; /* unused */
+  re_data *re = *(re_data**)PL_blob_data(symbol, NULL, NULL);
+  Sfprintf(s, "<regex>(%p)", re);	/* For blob details: re_portray() - re_portray/2 */
   return TRUE;
 }
 
@@ -195,7 +196,7 @@ typedef struct re_subject
   size_t      length;			/* Total length in bytes */
   size_t      charp;			/* Character position */
   size_t      bytep;			/* Byte position */
-  int	      flags;			/* Allocation flags */
+  unsigned    flags;			/* Allocation flags */
 } re_subject;
 
 
@@ -253,7 +254,7 @@ bytep_to_charp(re_subject *subj, size_t bytep)
 #define SUBJ_FLAGS (CVT_ATOM|CVT_STRING|CVT_LIST|REP_UTF8|CVT_EXCEPTION)
 
 static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
-re_get_subject(term_t t, re_subject *subj, int flags)
+re_get_subject(term_t t, re_subject *subj, unsigned flags)
 { memset(subj, 0, sizeof *subj); /* { NULL, 0, 0, 0, 0 }; */
 
   subj->flags = flags;
@@ -262,7 +263,7 @@ re_get_subject(term_t t, re_subject *subj, int flags)
 
 static void
 re_free_subject(re_subject *subj)
-{
+{ (void)subj; /* unused */
 }
 
 
@@ -331,7 +332,7 @@ typedef struct re_optdef
 { const char *name;
   unsigned    flag;
   unsigned    mode; /* RE_COMP, RE_EXEC, RE_NEG */
-  atom_t      atom; /* Filled in as-needed by lookup_optdef() */
+  atom_t      atom; /* Initially 0; filled in as-needed by lookup_optdef() */
 } re_optdef;
 
 #define RE_COMP 0x001
@@ -496,7 +497,7 @@ typedef struct re_config_opt
 { char		 *name;
   int		  id;
   re_config_type  type;
-  atom_t	  atom; /* Filled in as-needed by re_config() */
+  atom_t	  atom; /* Initially 0; filled in as-needed by re_config() */
 } re_config_opt;
 
 static re_config_opt cfg_opts[] =
@@ -633,10 +634,10 @@ init_capture_map(re_data *re)
 
 
 typedef struct re_compile_options
-{ int		flags; /* RE_STUDY */
+{ unsigned	flags; /* RE_STUDY */
   cap_type	capture_type;
-  int		seen_flags;
-  int		seen_cap;
+  unsigned	seen_flags;
+  unsigned	seen_cap;
 } re_compile_options;
 
 
@@ -729,7 +730,7 @@ write_re_options(IOSTREAM *s, const char *sep, int re_options)
 }
 
 
-/** '$re_portray'(+Stream, +Regex) is det.
+/** re_portray(+Stream, +Regex) is det.
 
     Output a debug string for the regexp (from re_compile)
     ('$re_match_options'/2 handles the match options)
@@ -745,7 +746,6 @@ re_portray(term_t stream, term_t regex)
   Sfprintf(fd, "<regex>(/%s/ [", PL_atom_chars(re->pattern));
   write_re_options(fd, "", re->re_options);
   /* TODO: compile_opts&RE_STUDY is in a flag that's not in re_data */
-  /* TODO: match_opts.start is in a flag that's not in re_data */
   Sfprintf(fd, " %s] $capture=%d", cap_type_str(re->capture_type), re->capture_size);
   if ( re->capture_size && re->capture_names )
   { int i;
@@ -837,8 +837,8 @@ re_compile(term_t pat, term_t reb, term_t options)
 
 
 typedef struct matchopts
-{ size_t start;
-  int    seen_start;
+{ size_t   start;
+  unsigned seen_start;
 } matchopts;
 
 
@@ -886,7 +886,7 @@ re_match_opt_postprocess(unsigned *re_options)
 /** '$re_match_options'(+Stream, +Options) is det.
 
     Output the Options as a debug string.
-    ('$re_portray'/2 handles the compile options)
+    (re_portray/2 handles the compile options)
 */
 static foreign_t
 re_portray_match_options_(term_t stream, term_t options)
@@ -1071,7 +1071,7 @@ alloc_ovector(re_data *re, int *ovecbuf, int *ovecsize, int **ovector)
   /* In the following, malloc() is correct, - don't use realloc().
      This is because the caller allocates ovecbuf on the stack; for
      cleanup, the caller checks whether *ovector is still on the stack
-     and if not, it does a free(). */
+     or (if it wasn't big enough and was malloc-ed) it does a free(). */
   if ( sz > *ovecsize )
   { if ( !(*ovector = malloc(sz*sizeof (int))) )
     { return PL_resource_error("memory");
@@ -1294,6 +1294,6 @@ install_pcre4pl(void)
   PL_register_foreign("re_match_",    3, re_match_,    0);
   PL_register_foreign("re_matchsub_", 4, re_matchsub_, 0);
   PL_register_foreign("re_foldl_",    6, re_foldl_,    0);
-  PL_register_foreign("$re_portray",  2, re_portray, 0);
-  PL_register_foreign("$re_portray_match_options", 2, re_portray_match_options_, 0);
+  PL_register_foreign("re_portray",   2, re_portray,   0);
+  PL_register_foreign("re_portray_match_options", 2, re_portray_match_options_, 0);
 }

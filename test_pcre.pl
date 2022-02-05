@@ -44,6 +44,7 @@
 :- use_module(library(plunit)).
 :- use_module(library(pcre)).
 :- use_module(library(error)).
+:- use_module(library(debug), [assertion/1]).
 
 test_pcre :-
     run_tests([ pcre
@@ -119,10 +120,16 @@ re_test(compile_option2, error(domain_error(compat_option, qqsv), _)) :-
 re_test(start, Sub == re_match{0:"es"}) :-
     re_compile("e.", Re, []),
     re_matchsub(Re, "aapenootjes", Sub, [start(4)]).
+
 re_test(fold1, Words == ["aap", "noot", "mies"]) :-
     re_foldl(add_match, "[a-z]+", "aap noot mies", Words, [], []).
 re_test(fold2, Words == [re_match{0:"aap"},re_match{0:"noot"},re_match{0:"mies"}]) :-
     re_foldl(add_match2, "[a-z]+", "  aap    noot mies ", Words, [], []).
+re_test(fold3, Count == 2) :- % re_match_count/3 example from documentation
+    Regex = "a",
+    String = "aap",
+    re_foldl(increment, Regex, String, 0, Count, []).
+
 re_test(named, [Sub, RegexStr] ==
 	       [re_match{0:"2017-04-20",
 			 date:"2017-04-20",
@@ -132,7 +139,7 @@ re_test(named, [Sub, RegexStr] ==
 		(?<month>\\d\\d) - (?<day>\\d\\d) )", Re,
 	       [extended]),
     re_matchsub(Re, "2017-04-20", Sub, []),
-    pcre:'$re_portray_string'(Re, RegexStr).
+    pcre:re_portray_string(Re, RegexStr).
 re_test(typed1, Sub == re_match{0:"2017-04-20",
 				date:"2017-04-20",
 				day:20,month:4,year:2017}) :-
@@ -236,6 +243,14 @@ re_test(replace_name1d, NewString == "[a][b][c]") :-
     re_replace("(?<any>.)"/g, "[\\{any}]", "abc", NewString).
 re_test(replace_name1e, error(existence_error(re_type_flag, 'X'), _)) :-
     re_replace("(?<any_X>.)"/g, "[\\{any}]", "abc", _NewString).
+re_test(replace_name2, error(existence_error(key, bar, re_match{0:0-1, foo:0-1}), _)) :-
+    re_replace('(?<foo>.)', "[$bar]", "abc", _NewString).
+re_test(replace_date, NewString == "4/20/2017") :-
+    re_replace("(?<date> (?<year_I>(?:\\d\\d)?\\d\\d) -
+                (?<month_I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
+               "$month/$day/$year",
+               "2017-04-20",
+               NewString).
 
 re_test(config_not_compound1, error(type_error(compound,version(A,B)),_)) :-
     re_config(version(A,B)).
@@ -309,19 +324,19 @@ re_test(config_stackrecurse) :-
 re_test(compile_portray_0,
         RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=0)") :-
     re_compile(".", Regex, []),
-    pcre:'$re_portray_string'(Regex, RegexStr).
+    pcre:re_portray_string(Regex, RegexStr).
 re_test(compile_portray_1a,
         RegexStr == "<regex>(/(.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=1 {0:CAP_STRING 1:CAP_STRING})") :-
     re_compile("(.)", Regex, []),
-    pcre:'$re_portray_string'(Regex, RegexStr).
+    pcre:re_portray_string(Regex, RegexStr).
 re_test(compile_portray_1b,
         RegexStr == "<regex>(/(.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_ATOM] $capture=1 {0:CAP_ATOM 1:CAP_ATOM})") :-
     re_compile("(.)", Regex, [capture_type(atom)]),
-    pcre:'$re_portray_string'(Regex, RegexStr).
+    pcre:re_portray_string(Regex, RegexStr).
 re_test(compile_portray_2,
         RegexStr == "<regex>(/(?<foo>.)([a-z]*)(?<bar_A>.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=3 {0:CAP_STRING 1:foo:CAP_STRING 2:CAP_STRING 3:bar:CAP_ATOM})") :-
     re_compile("(?<foo>.)([a-z]*)(?<bar_A>.)", Regex, []),
-    pcre:'$re_portray_string'(Regex, RegexStr).
+    pcre:re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_1,
      RegexStr == "<regex>(/./ [ANCHORED CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED EXTRA FIRSTLINE JAVASCRIPT_COMPAT MULTILINE NO_AUTO_CAPTURE NO_UTF8_CHECK UCP UNGREEDY UTF8 BSR_ANYCRLF NEWLINE_CRLF CAP_RANGE] $capture=0)") :-
@@ -344,7 +359,7 @@ re_test(compile_config_1,
 		bsr(anycrlf),
 		newline(crlf)
 	       ]),
-    pcre:'$re_portray_string'(Regex, RegexStr).
+    pcre:re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_1_inverse,
      RegexStr == "<regex>(/./ [JAVASCRIPT_COMPAT NO_UTF8_CHECK UTF8 BSR_UNICODE NEWLINE_CR CAP_RANGE] $capture=0)") :-
@@ -393,17 +408,17 @@ re_test(compile_config_1_inverse,
 		bsr(anycrlf),
 		newline(lf)
 	       ]),
-    pcre:'$re_portray_string'(Regex, RegexStr).
+    pcre:re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_2,
      RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_ATOM] $capture=0)") :-
     re_compile('.', Regex, [multiline(false),caseless(false),capture_type(atom),foo]),
-    pcre:'$re_portray_string'(Regex, RegexStr).
+    pcre:re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_3,
      RegexStr == "<regex>(/./ [CASELESS MULTILINE NO_UTF8_CHECK UTF8 NEWLINE_LF CAP_TERM] $capture=0)") :-
     re_compile('.', Regex, [qqsv,zot(123),optimise(false),capture_type(term),multiline(true),caseless(true),newline(lf)]),
-    pcre:'$re_portray_string'(Regex, RegexStr).
+    pcre:re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_4, error(type_error(option, newline(qqsv)), _)) :-
     re_compile('.', _Regex, [newline(qqsv)]).
@@ -416,19 +431,19 @@ re_test(compile_exec_1,
       re_match{0:"b"}]) :-
     re_compile('.', Regex, [anchored(true),bol(false),eol(false),empty(false),empty_atstart(false),start(666)]), % start(666) is ignored
     MatchOpts = [anchored(false),bol(false),eol(false),empty(false),empty_atstart(false),start(0)], % anchored(false) overrides
-    pcre:'$re_portray_match_options_string'(MatchOpts, MatchOptsStr),
+    pcre:re_portray_match_options_string(MatchOpts, MatchOptsStr),
     re_matchsub(Regex, "abc", Sub, MatchOpts),
-    pcre:'$re_portray_string'(Regex, RegexStr),
+    pcre:re_portray_string(Regex, RegexStr),
     re_matchsub(Regex, "abc", Sub2, [start(1)|MatchOpts]).
 
 re_test(compile_exec_2,
      MatchOptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0") :-
-    pcre:'$re_portray_match_options_string'([anchored(false),bol(true),eol(true),empty(true),empty_atstart(true)],
+    pcre:re_portray_match_options_string([anchored(false),bol(true),eol(true),empty(true),empty_atstart(true)],
 					    MatchOptsStr).
 
 re_test(compile_exec_3,
      MatchOptionsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0") :-
-    pcre:'$re_portray_match_options_string'([], MatchOptionsStr).
+    pcre:re_portray_match_options_string([], MatchOptionsStr).
 
 re_test(match_ok_start, Sub==re_match{0:"c"}) :-
     re_matchsub('.', "abc", Sub, [start(2)]).
@@ -443,14 +458,16 @@ re_test(replace_bad_ref_2, error(existence_error(key,1,re_match{0:0-1,foo:0-1}),
     re_replace("(?<foo>.)", "$1", "abc", _).
 re_test(replace_bad_ref_3, error(existence_error(key,foob,re_match{0:0-1,foo:0-1}),_)) :-
     re_replace("(?<foo>.)", "${foob}", "abc", _).
-re_test(replace_bad_ref_4, [blocked(re_match_range), Result == "xabc"]) :-
-    % See document: `?<foo_A>` - the "_A" suffix isn't allowed.
-    % TODO: This should throw an error but instead might  give weird results.
+re_test(replace_bad_ref_4, error(existence_error(re_type_flag, 'X'), _)) :-
+    re_replace("(?<foo_X>.)", "${foo}", "xabc", _).
+re_test(replace_ok_ref_4a, Result == "xabc") :-
     re_replace("(?<foo_A>.)", "${foo}", "xabc", Result).
+re_test(replace_ok_ref_4b, Result == "123bc") :-
+    re_replace("(?<foo_I>\\d+)", "${foo}", "00123bc", Result).
 
 re_test(replace_escape_dollar1a, Result == "$bc") :-
     re_replace(".", "$$", "abc", Result).
-re_test(replace_escape_dollar1b, [fixme(capture_type_atom), Result == '$bc']) :-
+re_test(replace_escape_dollar1b, Result == '$bc') :-
     re_replace(".", "$$", "abc", Result, [capture_type(atom)]).
 re_test(replace_escape_dollar1c, Result == '$bc') :-
     re_replace("."/a, "$$", "abc", Result).
@@ -491,8 +508,6 @@ re_test(wb_1, NewString == "carted") :-
 % <https://github.com/SWI-Prolog/packages-pcre/issues/5>.
 %
 % https://www.w3.org/TR/xpath-functions/#func-replace
-% I'm not sure why "cd" appears after the "]", but this is how it is
-% specified in the XPath standard:
 re_test(wb_2, fixme(javascript_compat)) :-
     re_replace("(ab)|(a)", "[1=$1][2=$2]", "abcd", Result, [compat(javascript)]),
     assertion(Result == "[1=ab][2=]cd").
@@ -503,6 +518,10 @@ re_test(wb_3, Result == "abbraccaddabbra") :-
 
 :- end_tests(pcre).
 
+% Predicates used by re_foldl tests:
+
 add_match(Dict, [Dict.0|List], List).
 
 add_match2(Dict, [Dict|List], List).
+
+increment(_Match, V0, V1) :- V1 is V0+1.

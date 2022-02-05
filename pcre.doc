@@ -40,15 +40,15 @@ The core facility for string matching in Prolog is provided by DCG
 (\jargon{Definite Clause Grammars}). Using DCGs is typically more
 verbose but gives reuse, modularity, readability and mixing with
 arbitrary Prolog code in return. Supporting regular expressions has some
-advantages: (1) in simple cases the terse specification of a regular
-expression is more comfortable, (2) many programmers are familar with
-them and (3) regular expressions are part of domain specific languages
+advantages: (1) in simple cases, the terse specification of a regular
+expression is more comfortable; (2) many programmers are familar with
+them; and (3) regular expressions are part of domain specific languages
 one may wish to implement in Prolog, e.g., SPARQL.
 
 There are roughly three options for adding regular expressions to
 Prolog. One is to simply interpret them in Prolog. Given Prolog's
 unification and backtracking facilities this is remarkable simple and
-performs quite reasonable. Still, the implementing all facilities of
+performs quite reasonable. Still, implementing all facilities of
 modern regular expression engines requires significant effort.
 Alternatively, we can \jargon{compile} them into DCGs. This brings terse
 expressions to DCGs while staying in the same framework. The

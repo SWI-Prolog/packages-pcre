@@ -46,9 +46,9 @@
             re_flush/0,
             re_config/1           % ?Config
           ]).
-:- autoload(library(apply),[maplist/3]).
-:- autoload(library(error),[must_be/2,existence_error/2]).
-:- autoload(library(dcg/basics),[string/3,eos/2,digit/3,digits/3]).
+:- autoload(library(apply), [maplist/2, maplist/3]).
+:- autoload(library(error), [must_be/2, existence_error/2]).
+:- autoload(library(dcg/basics), [string/3, eos/2, digit/3, digits/3]).
 :- autoload(library(lists), [append/3]).
 
 % The foreign language code (pcre4pl.c) defines:
@@ -57,28 +57,35 @@
 %    re_match_/3              % +Regex, +String, +Options
 %    re_matchsub_/4           % +Regex, +String, -Sub:dict, +Options
 %    re_fold_/6               % :Goal, +Regex, +String, ?V0, ?V, +Options)
-%   undocumented predicates for debugging and unit tests, with
-%   related wrapper predicates:
-%    '$re_portray'/2               % +Stream, +Regex
-%    '$re_portray_match_options'/2 % +Stream, +Options
+%  Undocumented predicates for debugging and unit tests, with related
+%  wrapper predicates:
+%    re_portray/2                      % +Stream, +Regex
+%    re_portray_match_options/2        % +Stream, +Options
+%    re_portray_string/2               % +Regex, -String
+%    re_portray_match_options_string/2 % +Regex, -String
 :- use_foreign_library(foreign(pcre4pl)).
+
+:- public re_portray/2,
+    re_portray_match_options/2,
+    re_portray_string/2,
+    re_portray_match_options_string/2.
 
 :- meta_predicate
     re_foldl(3, +, +, ?, ?, +).
 
 /** <module> Perl compatible regular expression matching for SWI-Prolog
 
-This module provides an interface   to  the [PCRE](http://www.pcre.org/)
-(Perl Compatible Regular Expression)  library.   This  Prolog  interface
+This module  provides an  interface to  the [PCRE](http://www.pcre.org/)
+(Perl  Compatible Regular  Expression) library.   This Prolog  interface
 provides an almost comprehensive wrapper around PCRE.
 
-Regular  expressions  are  created  from  a   pattern  and  options  and
-represented as a SWI-Prolog _blob_.  This   implies  they are subject to
-(atom) garbage collection. Compiled regular   expressions  can safely be
-used in multiple threads. Most  predicates   accept  both  an explicitly
-compiled regular expression, a pattern, or  a term Pattern/Flags.    The
+Regular  expressions  are  created  from   a  pattern  and  options  and
+represented as  a SWI-Prolog _blob_.   This implies they are  subject to
+(atom) garbage  collection. Compiled  regular expressions can  safely be
+used  in multiple  threads. Most  predicates accept  both an  explicitly
+compiled regular  expression, a pattern,  or a term  Pattern/Flags.  The
 semantics of the pattern can be additionally modified by options. In the
-latter two cases a regular expression _blob_  is created and stored in a
+latter two cases a regular expression  _blob_ is created and stored in a
 cache. The cache can be cleared using re_flush/0.
 
 @see `man pcreapi` or https://www.pcre.org/original/doc/html/pcreapi.html
@@ -125,40 +132,39 @@ cache. The cache can be cleared using re_flush/0.
 %     true.
 %     ```
 %
-%   Defined Options are  given    below.   Please  consult  the PCRE
-%   documentation for details.   If an option is repeated, the first
-%   value is used and subsequent values are ignored.    Unrecognized
-%   options are ignored. Unless otherwise specified, boolean options
-%   default to =false=.
+%   Defined  Options   are  given   below.   Please  consult   the  PCRE
+%   documentation  for details.   If an  option is  repeated, the  first
+%   value  is  used and  subsequent  values  are ignored.   Unrecognized
+%   options  are ignored.  Unless otherwise  specified, boolean  options
+%   default to `false`.
 %
 %     * anchored(Bool)
-%     If =true=, match only at the first position
+%     If `true`, match only at the first position
 %     * bol(Bool)
-%     String is the beginning of a line (default =false=) -
-%       affects behavior of circumflex metacharacter (=^=).
+%     String is the beginning of a line (default `false`) -
+%       affects behavior of circumflex metacharacter (`^`).
 %     * bsr(Mode)
-%     If =anycrlf=, \R only matches CR, LF or CRLF.  If =unicode=,
+%     If `anycrlf`, \R only matches CR, LF or CRLF.  If `unicode`,
 %     \R matches all Unicode line endings.
 %     * empty(Bool)
-%     An empty string is a valid match (default =true=)
+%     An empty string is a valid match (default `true`)
 %     * empty_atstart(Bool)
 %     An empty string at the start of the subject is a valid match
-%     (default =true=)
+%     (default `true`)
 %     * eol(Bool)
-%     String is the end of a line (default =false=) -
-%       affects behavior of dollar metacharacter (=$=).
+%     String is the end of a line -
+%       affects behavior of dollar metacharacter (`$`).
 %     * newline(Mode)
-%     If =any=, recognize any Unicode newline sequence,
-%     if =anycrlf=, recognize CR, LF, and CRLF as newline
-%     sequences, if =cr=, recognize CR, if =lf=, recognize
-%     LF and finally if =crlf= recognize CRLF as newline.
+%     If `any`, recognize any Unicode newline sequence,
+%     if `anycrlf`, recognize CR, LF, and CRLF as newline
+%     sequences, if `cr`, recognize CR, if `lf`, recognize
+%     LF, if `crlf` recognize CRLF as newline.
 %     * start(+From)
 %     Start at the given character index
 %
-%   @arg Regex is the output  of  re_compile/3,   a  pattern  or  a term
+%   @arg  Regex is  the  output of  re_compile/3, a  pattern  or a  term
 %   Pattern/Flags, where Pattern is an atom or string. The defined flags
 %   and their related option for re_compile/3 are below.
-%
 %     - *x*: extended(true)
 %     - *i*: caseless(true)
 %     - *m*: multiline(true)
@@ -167,12 +173,12 @@ cache. The cache can be cleared using re_flush/0.
 %     - *r*: capture_type(range)
 %     - *t*: capture_type(term)
 %
-%   If Regex is the output of re_compile/3, any compile-time options
-%   in Options are ignored and only match-time options are used.
+%   If Regex is the output  of re_compile/3, any compile-time options in
+%   Options or Flags are ignored and only match-time options are used.
 %
-%   The options that are derived from flags take precedence over the
-%   options in the Options list. In the case of conflicting flags,
-%   the first one is used (e.g., =ra= results in =capture_type(range)=).
+%   The options  that are  derived from flags  take precedence  over the
+%   options in the  Options list. In the case of  conflicting flags, the
+%   first one is used (e.g., `ra` results in `capture_type(range)`).
 
 re_match(Regex, String) :-
     re_match(Regex, String, []).
@@ -183,20 +189,21 @@ re_match(Regex, String, Options) :-
 %!  re_matchsub(+Regex, +String, -Sub:dict) is semidet.
 %!  re_matchsub(+Regex, +String, -Sub:dict, +Options) is semidet.
 %
-%   Match String against Regex. On  success,   Sub  is a dict containing
-%   integer keys for the numbered capture group   and  atom keys for the
-%   named capture groups. The associated  value   is  determined  by the
-%   capture_type(Type) option passed to re_compile/3,   may be specified
-%   using flags if Regex  is  of  the   form  Pattern/Flags  and  may be
-%   specified at the  level  of  individual   captures  using  a  naming
-%   convention for the caption name. See re_compile/3 for details.
+%   Match String  against Regex.  On  success, Sub is a  dict containing
+%   integer keys  for the numbered capture  group and atom keys  for the
+%   named capture groups. The entire match  string has the key `0`.  The
+%   associated  value is  determined  by  the capture_type(Type)  option
+%   passed  to  re_compile/3, or  by  flags  if  Regex  is of  the  form
+%   Pattern/Flags;  and may  be  specified at  the  level of  individual
+%   captures  using  a  naming  convention for  the  caption  name.  See
+%   re_compile/3 for details.
 %
-%   The example below  exploits  the  typed   groups  to  parse  a  date
+%   The  example  below  exploits  the  typed groups  to  parse  a  date
 %   specification:
 %
 %     ```
 %     ?- re_matchsub("(?<date> (?<year_I>(?:\\d\\d)?\\d\\d) -
-%                     (?<month_I>\\d\\d) - (?<day_I>\\d\\d) )"/e,
+%                     (?<month_I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
 %                    "2017-04-20", Sub, []).
 %     Sub = re_match{0:"2017-04-20", date:"2017-04-20",
 %                    day:20, month:4, year:2017}.
@@ -204,8 +211,8 @@ re_match(Regex, String, Options) :-
 %     ```
 %
 %   @arg Options Only _execution_ options are processed.  See re_match/3
-%   for the set of options.  _Compilation_ options must be passed as
-%   `/flags` to Regex.
+%   for the  set of  options.  _Compilation_ options  must be  passed as
+%   ``/Flags`` to Regex.
 %
 %   @arg Regex  See re_match/2 for a description of this argument.
 
@@ -219,8 +226,8 @@ re_matchsub(Regex, String, Subs, Options) :-
 
 %!  re_foldl(:Goal, +Regex, +String, ?V0, ?V, +Options) is semidet.
 %
-%   _Fold_ all matches of Regex on String.  Each match is represented by
-%   a dict as specified for re_matchsub/4. V0  and V are related using a
+%   Fold all matches of Regex on String.  Each match is represented by a
+%   dict as specified  for re_matchsub/4.  V0 and V are  related using a
 %   sequence of invocations of Goal as illustrated below.
 %
 %	```
@@ -231,7 +238,7 @@ re_matchsub(Regex, String, Subs, Options) :-
 %       ```
 %
 %   This predicate is used to implement re_split/4 and re_replace/4. For
-%   example, we can count all matches of   a  Regex on String using this
+%   example, we  can count all matches  of a Regex on  String using this
 %   code:
 %
 %     ```
@@ -260,35 +267,35 @@ re_call_folder(Goal, Pairs, V0, V1) :-
     call(Goal, Dict, V0, V1).
 
 
-%!  re_split(+Pattern, +String, -Split:list) is det.
-%!  re_split(+Pattern, +String, -Split:list, +Options) is det.
+%!  re_split(+Pattern, +String, -Splits:list) is det.
+%!  re_split(+Pattern, +String, -Splits:list, +Options) is det.
 %
-%   Split String using the regular expression   Pattern. Split is a list
-%   of strings holding alternating matches of  Pattern and skipped parts
-%   of the String, starting with a skipped   part.  The Split lists ends
-%   with a string of the content  of   String  after  the last match. If
-%   Pattern does not appear in String, Split is a list holding a copy of
-%   String. This implies the number  of   elements  in Split is _always_
+%   Split String using the regular  expression Pattern. Splits is a list
+%   of strings holding alternating matches  of Pattern and skipped parts
+%   of the String, starting with a  skipped part.  The Splits lists ends
+%   with a  string of  the content  of String after  the last  match. If
+%   Pattern does not  appear in String, Splits is a  list holding a copy
+%   of String. This implies the number of elements in Splits is _always_
 %   odd.  For example:
 %
 %     ```
-%     ?- re_split("a+", "abaac", Split, []).
-%     Split = ["","a","b","aa","c"].
-%     ?- re_split(":\\s*"/n, "Age: 33", Split, []).
-%     Split = ['Age', ': ', 33].
+%     ?- re_split("a+", "abaac", Splits, []).
+%     Splits = ["","a","b","aa","c"].
+%     ?- re_split(":\\s*"/n, "Age: 33", Splits, []).
+%     Splits = ['Age', ': ', 33].
 %     ```
 %
-%   @arg Pattern is the pattern  text,   optionally  follows  by /Flags.
+%   @arg  Pattern is  the pattern  text, optionally  follows by  /Flags.
 %   Similar to re_matchsub/4, the final output type can be controlled by
-%   a flag =a= (atom), =s= (string, default) or =n= (number if possible,
+%   a flag `a` (atom), `s` (string, default) or `n` (number if possible,
 %   atom otherwise).
 
-re_split(Pattern, String, Split) :-
-    re_split(Pattern, String, Split, []).
-re_split(Pattern, String, Split, Options) :-
+re_split(Pattern, String, Splits) :-
+    re_split(Pattern, String, Splits, []).
+re_split(Pattern, String, Splits, Options) :-
     split_range_regex(Pattern, Compiled, Type, Options),
     State = state(String, 0, Type),
-    re_foldl(split(State), Compiled, String, Split, [Last], Options),
+    re_foldl(split(State), Compiled, String, Splits, [Last], Options),
     arg(2, State, LastSkipStart),
     typed_sub(Type, String, LastSkipStart, _, 0, Last).
 
@@ -346,35 +353,43 @@ typed_sub(name, Haystack, B, L, A, Value) :-
 %!  re_replace(+Pattern, +With, +String, -NewString) is det.
 %!  re_replace(+Pattern, +With, +String, -NewString, +Options) is det.
 %
-%   Replace matches of the regular  expression   Pattern  in String with
-%   With (possibly containing references to captured substrings)
+%   Replace matches  of the  regular expression  Pattern in  String with
+%   With (possibly containing references to captured substrings).
 %
-%   Throws an error if With uses a name that doesn't exist in the Pattern.
+%   Throws  an error  if With  uses  a name  that doesn't  exist in  the
+%   Pattern.
 %
-%   @arg Pattern is the pattern text, optionally follows by /Flags.
-%   Flags may include `g`, replacing all occurences of Pattern. In
-%   addition, similar to re_matchsub/4, the final output type can be
-%   controlled by a flag =a= (atom) or =s= (string, default).  The
-%   output type can also be specified by the =capture_type= option.
-%   Capture type suffixes are checked for validity but otherwise
-%   ignored (e.g., =(?<foo_A>.)= is the same as (?<foo>.)= but
-%   =(?<foo_X>)= is an error.)
+%   @arg  Pattern is  the pattern  text, optionally  follows by  /Flags.
+%   Flags  may include  `g`,  replacing all  occurences  of Pattern.  In
+%   addition, similar  to re_matchsub/4,  the final  output type  can be
+%   controlled  by a  flag `a`  (atom)  or `s`  (string, default).   The
+%   output  type can  also be  specified by  the `capture_type`  option.
+%   Capture  type  suffixes  can   modify  behavior;  for  example,  the
+%   following  will  change an  ISO  8601  format date  (YYYY-MM-DD)  to
+%   American style (m/d/y),  and also remove leading zeros  by using the
+%   `_I` suffix:
+%   ```
+%   re_replace("(?<date> (?<year_I>(?:\\d\\d)?\\d\\d) -
+%               (?<month_I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
+%              "$month-$day-$year",
+%              ISODate, AmericanDate)`
+%   ```
 %
-%   @arg With is the replacement text. It may reference captured
-%   substrings using \N or $Name. Both N and Name may be written as
-%   {N} and {Name} to avoid ambiguities. If a substring is named, it
-%   cannot be referenced by its number. The single chracters =$= and
-%   =\= can be escaped by doubling (e.g.,
-%   =re_replace(".","$$","abc",Replaced)= results in
-%   =Replaced="$bc"=). (Because =\= is an escape character inside
-%   strings, you need to write "\\\\" to get a single backslash.)
+%   @arg  With  is  the  replacement text.  It  may  reference  captured
+%   substrings using \N or $Name. Both N  and Name may be written as {N}
+%   and {Name} to avoid ambiguities. If  a substring is named, it cannot
+%   be referenced by its number. The single chracters `$` and `\` can be
+%   escaped  by  doubling  (e.g.,  `re_replace(".","$$","abc",Replaced)`
+%   results in  `Replaced="$bc"`). (Because  `\` is an  escape character
+%   inside strings, you need to write "\\\\" to get a single backslash.)
 %
 %   @arg Options See re_match/3 for the set of options.
 %
-%   The options that are derived from flags take precedence over the
-%   options in the Options list. In the case of conflicting flags,
-%   the first one is used (e.g., =as= results in =capture_type(string)=).
-%   If a =capture_type= is meaningless (=range= or =term=), it is ignored.
+%   The options  that are  derived from flags  take precedence  over the
+%   options in the  Options list. In the case of  conflicting flags, the
+%   first one  is used  (e.g., `as` results  in `capture_type(string)`).
+%   If  a  `capture_type` is  meaningless  (`range`  or `term`),  it  is
+%   ignored.
 
 re_replace(Pattern, With, String, NewString) :-
     re_replace(Pattern, With, String, NewString, []).
@@ -399,11 +414,16 @@ re_replace(Pattern, With, String, NewString, Options) :-
 
 regex_capture_type_flag_chars(Options, Flags, Chars) :-
     atom_chars(Flags, Chars0),
-    % Could do delete(Options, capture_type(_), ...)
-    % but no need because Flags take precedence and first
-    % occurence of an option in Options takes precedence.
-    (   memberchk(capture_type(T), Options), type(TFlag, T)
-    ->  append(Chars0, [TFlag], Chars)
+    % For replace or split, the capture_type must be range, so if a
+    % different result is desired, it is specified in the flags. The
+    % following code converts an Options capture_type to a flag
+    % character and appends it to the Flags.
+    (   memberchk(capture_type(T), Options),
+        type_flag(TFlag, T)
+    ->  % No need to do delete(Options,capture_type(_),Options2)
+        % because Flags take precedence and first occurence in Options
+        % takes precedence.
+        append(Chars0, [TFlag], Chars)
     ;   Chars = Chars0
     ).
 
@@ -425,18 +445,19 @@ replace_flags([], [], All, Type) :-
     default(All, first),
     default(Type, string).
 replace_flags([H|T0], T, All, Type) :-
-    (   all(H, All)
+    (   all_flag(H, All)
     ->  true
-    ;   type(H, Type)
+    ;   type_flag(H, Type)
     ),
     !,
     replace_flags(T0, T, All, Type).
 replace_flags([H|T0], [H|T], All, Type) :-
     replace_flags(T0, T, All, Type).
 
-all(g, all).
-type(a, atom).
-type(s, string).
+all_flag(g, all).
+
+type_flag(a, atom).
+type_flag(s, string).
 
 %! default(?Val, +Default) is det.
 %  If Val isn't instantiated, instantiate it to Default.
@@ -472,20 +493,21 @@ parts_to_output(atom, Parts, String) :-
 
 %!  compile_replacement(+With, -Compiled)
 %
-%   Compile the replacement specification into  a specification that can
+%   Compile the replacement specification  into a specification that can
 %   be processed quickly. The compiled expressions are cached and may be
-%   reclaimed using re_flush/0.
+%   reclaimed using  re_flush/0 (which also removes  compiled Regex from
+%   re_compile/3).
 %
-%   This "compilation" has nothing to do with PCRE pattern compilation;
-%   it's used by re_replace/5 to cache the results of processing the
-%   `With` argument.
+%   This "compilation" has nothing to  do with PCRE pattern compilation;
+%   it's used by re_replace/5 to proces the With argument.
 
 :- table compile_replacement/2 as shared.
 
 compile_replacement(With, r(Parts, Extract)) :-
     string_codes(With, Codes),
     phrase(replacement_parts(Parts, Pairs), Codes),
-    % The Pairs is Key-Value pairs, but a Key might be duplicated.
+    % Pairs is LookupKey-Slot pairs, where a LookupKey might be
+    % duplicated (Slot is a shared variable within Parts).
     Extract = Pairs.
 
 replacement_parts(Parts, Extract) -->
@@ -515,10 +537,10 @@ add_part(Codes, [H|T], T) :-
 string_escape([]) -->
     [].
 string_escape([0'$|T]) -->
-    "$$",
+    "$$", !,
     string_escape(T).
 string_escape([0'\\|T]) -->
-    "\\\\",
+    "\\\\", !,
     string_escape(T).
 string_escape([H|T]) -->
     [H],
@@ -570,51 +592,51 @@ alnum(L) -->
 
 %!  re_compile(+Pattern, -Regex, +Options) is det.
 %
-%   Compiles Pattern to a Regex _blob_ of type =regex= (see blob/2).
-%   Defined Options are  given    below.   Please  consult  the PCRE
-%   documentation for details.   If an option is repeated, the first
-%   value is used and subsequent values are ignored.    Unrecognized
-%   options are ignored. Unless otherwise specified, boolean options
-%   default to =false=.
+%   Compiles Pattern  to a  Regex _blob_ of  type `regex`  (see blob/2).
+%   Defined  Options   are  given   below.   Please  consult   the  PCRE
+%   documentation  for details.   If an  option is  repeated, the  first
+%   value  is  used and  subsequent  values  are ignored.   Unrecognized
+%   options  are ignored.  Unless otherwise  specified, boolean  options
+%   default to `false`.
 %
 %     * anchored(Bool)
-%     If =true=, match only at the first position
+%     If `true`, match only at the first position
 %     * auto_capture(Bool)
 %     Enable use of numbered capturing parentheses.
-%     (default =true=)
+%     (default `true`)
 %     * bsr(Mode)
-%     If =anycrlf=, \R only matches CR, LF or CRLF.  If =unicode=,
+%     If `anycrlf`, \R only matches CR, LF or CRLF.  If `unicode`,
 %     \R matches all Unicode line endings.
 %     * caseless(Bool)
-%     If =true=, do caseless matching.
+%     If `true`, do caseless matching.
 %     * compat(With)
-%     If =javascript=, JavaScript compatibility
+%     If `javascript`, JavaScript compatibility
 %     * dollar_endonly(Bool)
-%     If =true=, $ not to match newline at end
+%     If `true`, $ not to match newline at end
 %     * dotall(Bool)
-%     If =true=, . matches anything including NL
+%     If `true`, . matches anything including NL
 %     * dupnames(Bool)
-%     If =true=, allow duplicate names for subpatterns
+%     If `true`, allow duplicate names for subpatterns
 %     * extended(Bool)
-%     If =true=, ignore white space and # comments
+%     If `true`, ignore white space and # comments
 %     * extra(Bool)
-%     If =true=, PCRE extra features (not much use currently)
+%     If `true`, PCRE extra features (not much use currently)
 %     * firstline(Bool)
-%     If =true=, force matching to be before newline
+%     If `true`, force matching to be before newline
 %     * greedy(Bool)
-%     If =true=, operators such as `+` and `*` are greedy unles
-%     followed by `?`; if =false=, the operators are not greedy
+%     If `true`, operators such as `+` and `*` are greedy unles
+%     followed by `?`; if `false`, the operators are not greedy
 %     and `?` has the opposite meaning.
-%     (default =true=)
+%     (default `true`)
 %     * multiline(Bool)
-%     If =true=, ^ and $ match newlines within data
+%     If `true`, ^ and $ match newlines within data
 %     * newline(Mode)
-%     If =any=, recognize any Unicode newline sequence,
-%     if =anycrlf= (default), recognize CR, LF, and CRLF as newline
-%     sequences, if =cr=, recognize CR, if =lf=, recognize
-%     LF and finally if =crlf= recognize CRLF as newline.
+%     If `any`, recognize any Unicode newline sequence,
+%     if `anycrlf` (default), recognize CR, LF, and CRLF as newline
+%     sequences, if `cr`, recognize CR, if `lf`, recognize
+%     LF and finally if `crlf` recognize CRLF as newline.
 %     * ucp(Bool)
-%     If =true=, use Unicode properties for \d, \w, etc.
+%     If `true`, use Unicode properties for \d, \w, etc.
 %
 %   In addition to the options above that directly map to PCRE flags the
 %   following options are processed:
@@ -622,37 +644,39 @@ alnum(L) -->
 %     * optimise(Bool) or optimize(Bool)
 %     If `true`, _study_ the regular expression.
 %     * capture_type(+Type)
-%     How to return the matched part of the input and possibly captured
+%     How to return the matched part  of the input and possibly captured
 %     groups in there.  Possible values are:
 %       - string
 %       Return the captured string as a string (default).
 %       - atom
 %       Return the captured string as an atom.
 %       - range
-%       Return the captured string as a pair `Start-Length`.  Note
-%       the we use ``Start-Length` rather than the more conventional
+%       Return the captured string as a pair `Start-Length`.  Note that
+%       we use `Start-Length` rather than the more conventional
 %       `Start-End` to allow for immediate use with sub_atom/5 and
 %       sub_string/5.
 %       - term
-%       Parse the captured string as a Prolog term.  This is notably
+%       Parse the  captured string  as a Prolog  term.  This  is notably
 %       practical if you capture a number.
 %
-%    The `capture_type` specifies the  default   for  this  pattern. The
-%    interface supports a different type for   each  _named_ group using
-%    the syntax =|(?<name_T>...)|=, where =T= is   one  of =S= (string),
-%    =A= (atom), =I= (integer), =F= (float),   =N=  (number), =T= (term)
-%    and =R= (range). In the current implementation =I=, =F= and =N= are
-%    synonyms for =T=. Future versions may   act different if the parsed
-%    value is not of the requested numeric type.
+%    The  `capture_type` specifies  the default  for this  pattern.  The
+%    interface supports  a different type  for each _named_  group using
+%    the syntax  `(?<name_T>...)`, where `T`  is one of  ``S`` (string),
+%    ``A`` (atom), ``I`` (integer), ``F`` (float), ``N`` (number), ``T``
+%    (term)  and ``R``  (range).  In the  current implementation  ``I``,
+%    ``F`` and  ``N`` are synonyms  for ``T``.  Future versions  may act
+%    different if the parsed value is not of the requested numeric type.
 %
 %    Note that re_compile/3 does not support the Pattern/Flags form that
-%    is supported by re_match/3, re_replace/4, etc.; the Pattern must
-%    be text and all compile options specified in Options.
+%    is supported by re_match/3, re_replace/4, etc.; the Pattern must be
+%    text and all compile options specified in Options.
 
 %!  re_compiled(+Spec, --Regex, +Options) is det.
 %
-%   Create a compiled regex from a specification.  Cached compiled
-%   regular expressions can be reclaimed using re_flush/0.
+%   Create  a  compiled regex  from  a  specification.  Cached  compiled
+%   regular expressions  can be  reclaimed using re_flush/0  (which also
+%   removes   "compiled"   With    arguments   from   re_replace/4   and
+%   re_replace/5).
 
 :- table re_compile/3 as shared.
 
@@ -697,48 +721,43 @@ re_flush :-
 
 %!  re_config(+Term)
 %
-%   Extract configuration information from the pcre  library. Term is of
-%   the form Name(Value). Name  is   derived  from the =|PCRE_CONFIG_*|=
-%   constant after removing =|PCRE_CONFIG_|= and mapping the name to lower
-%   case, e.g. `utf8`, `unicode_properties`,  etc.   Value  is  either a
-%   Prolog boolean, integer or atom.
+%   Extract configuration information from the  pcre library. Term is of
+%   the   form    ``Name(Value)``.    Name    is   derived    from   the
+%   ``PCRE_CONFIG_*``  constant  after   removing  ``PCRE_CONFIG_``  and
+%   mapping the name to  lower case, e.g.  `utf8`, `unicode_properties`,
+%   etc.  Value is a Prolog boolean, integer, or atom.
 %
-%   Finally, the functionality of pcre_version()  is available using the
+%   Finally, the functionality of  pcre_version() is available using the
 %   configuration name `version`.
 %
-%   =Term= must be instantiated; re_config/1 doesn't backtrack through
-%   all the possible configuration values.
+%   Term cannot be a variable; re_config/1 doesn't backtrack through all
+%   the possible configuration values.
 %
-%   @error `existence_error` if =Term= isn't defined as a =|PCRE_CONFIG_*|= constant.
-%   @error `type_error` if =Term= isn't a 1-arity compound term.
-%   @error `instantiation_error` if =Term= is a variable.
+%   @error `existence_error` if Term isn't defined as a
+%           ``PCRE_CONFIG_*`` constant.
+%   @error `type_error` if Term isn't a 1-arity compound term.
+%   @error `instantiation_error` if Term is a variable.
 %
 %   @see `man pcreapi` for details
 
 
-%!  '$re_portray'(+Stream, +Regex) is det.
+% re_portray(+Stream, +Regex) is det.
 %
-%  Output debug info on Stream.
+%  Output debug info for a Regex on Stream (used in tests).
 
-'$re_portray'(Regex) :-
-    '$re_portray'(current_output, Regex).
+re_portray(Regex) :-
+    re_portray(current_output, Regex).
 
-'$re_portray_string'(Regex, String) :-
+re_portray_string(Regex, String) :-
     with_output_to(string(String),
-                   '$re_portray'(current_output, Regex)).
+                   re_portray(current_output, Regex)).
 
-'$re_portray_atom'(Regex, Atom) :-
-    with_output_to(atom(Atom),
-                   '$re_portray'(current_output, Regex)).
-
-%!  '$re_portray_match_options'(+Stream, +Options) is det.
+%  re_portray_match_options(+Stream, +Options) is det.
 %
-% Output debug info on Stream.
+% Output debug info from parsing Options on Stream (used in tests).
 
-'$re_portray_match_options_string'(Options, String) :-
+re_portray_match_options_string(Options, String) :-
     with_output_to(string(String),
-                   '$re_portray_match_options'(current_output, Options)).
+                   re_portray_match_options(current_output, Options)).
 
-'$re_portray_match_options_atom'(Options, Atom) :-
-    with_output_to(atom(Atom),
-                   '$re_portray_match_options'(current_output, Options)).
+end_of_file.
