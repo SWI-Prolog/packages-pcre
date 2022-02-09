@@ -140,7 +140,7 @@ re_test(named, [Sub, RegexStr] ==
 		(?<month>\\d\\d) - (?<day>\\d\\d) )", Re,
 	       [extended]),
     re_matchsub(Re, "2017-04-20", Sub, []),
-    pcre:re_portray_string(Re, RegexStr).
+    re_portray_string(Re, RegexStr).
 re_test(typed1, Sub == re_match{0:"2017-04-20",
 				date:"2017-04-20",
 				day:20,month:4,year:2017}) :-
@@ -325,19 +325,19 @@ re_test(config_stackrecurse) :-
 re_test(compile_portray_0,
         RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=0)") :-
     re_compile(".", Regex, []),
-    pcre:re_portray_string(Regex, RegexStr).
+    re_portray_string(Regex, RegexStr).
 re_test(compile_portray_1a,
         RegexStr == "<regex>(/(.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=1 {0:CAP_STRING 1:CAP_STRING})") :-
     re_compile("(.)", Regex, []),
-    pcre:re_portray_string(Regex, RegexStr).
+    re_portray_string(Regex, RegexStr).
 re_test(compile_portray_1b,
         RegexStr == "<regex>(/(.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_ATOM] $capture=1 {0:CAP_ATOM 1:CAP_ATOM})") :-
     re_compile("(.)", Regex, [capture_type(atom)]),
-    pcre:re_portray_string(Regex, RegexStr).
+    re_portray_string(Regex, RegexStr).
 re_test(compile_portray_2,
         RegexStr == "<regex>(/(?<foo>.)([a-z]*)(?<bar_A>.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=3 {0:CAP_STRING 1:foo:CAP_STRING 2:CAP_STRING 3:bar:CAP_ATOM})") :-
     re_compile("(?<foo>.)([a-z]*)(?<bar_A>.)", Regex, []),
-    pcre:re_portray_string(Regex, RegexStr).
+    re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_1,
      RegexStr == "<regex>(/./ [ANCHORED CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED EXTRA FIRSTLINE JAVASCRIPT_COMPAT MULTILINE NO_AUTO_CAPTURE NO_UTF8_CHECK UCP UNGREEDY UTF8 BSR_ANYCRLF NEWLINE_CRLF CAP_RANGE] $capture=0)") :-
@@ -360,7 +360,7 @@ re_test(compile_config_1,
 		bsr(anycrlf),
 		newline(crlf)
 	       ]),
-    pcre:re_portray_string(Regex, RegexStr).
+    re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_1_inverse,
      RegexStr == "<regex>(/./ [JAVASCRIPT_COMPAT NO_UTF8_CHECK UTF8 BSR_UNICODE NEWLINE_CR CAP_RANGE] $capture=0)") :-
@@ -409,17 +409,17 @@ re_test(compile_config_1_inverse,
 		bsr(anycrlf),
 		newline(lf)
 	       ]),
-    pcre:re_portray_string(Regex, RegexStr).
+    re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_2,
      RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_ATOM] $capture=0)") :-
     re_compile('.', Regex, [multiline(false),caseless(false),capture_type(atom),foo]),
-    pcre:re_portray_string(Regex, RegexStr).
+    re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_3,
      RegexStr == "<regex>(/./ [CASELESS MULTILINE NO_UTF8_CHECK UTF8 NEWLINE_LF CAP_TERM] $capture=0)") :-
     re_compile('.', Regex, [qqsv,zot(123),optimise(false),capture_type(term),multiline(true),caseless(true),newline(lf)]),
-    pcre:re_portray_string(Regex, RegexStr).
+    re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_4, error(type_error(option, newline(qqsv)), _)) :-
     re_compile('.', _Regex, [newline(qqsv)]).
@@ -432,19 +432,19 @@ re_test(compile_exec_1,
       re_match{0:"b"}]) :-
     re_compile('.', Regex, [anchored(true),bol(false),eol(false),empty(false),empty_atstart(false),start(666)]), % start(666) is ignored
     MatchOpts = [anchored(false),bol(false),eol(false),empty(false),empty_atstart(false),start(0)], % anchored(false) overrides
-    pcre:re_portray_match_options_string(MatchOpts, MatchOptsStr),
+    re_portray_match_options_string(MatchOpts, MatchOptsStr),
     re_matchsub(Regex, "abc", Sub, MatchOpts),
-    pcre:re_portray_string(Regex, RegexStr),
+    re_portray_string(Regex, RegexStr),
     re_matchsub(Regex, "abc", Sub2, [start(1)|MatchOpts]).
 
 re_test(compile_exec_2,
      MatchOptsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0") :-
-    pcre:re_portray_match_options_string([anchored(false),bol(true),eol(true),empty(true),empty_atstart(true)],
+    re_portray_match_options_string([anchored(false),bol(true),eol(true),empty(true),empty_atstart(true)],
 					    MatchOptsStr).
 
 re_test(compile_exec_3,
      MatchOptionsStr == "NO_UTF8_CHECK NEWLINE_ANYCRLF $start=0") :-
-    pcre:re_portray_match_options_string([], MatchOptionsStr).
+    re_portray_match_options_string([], MatchOptionsStr).
 
 re_test(match_ok_start, Sub==re_match{0:"c"}) :-
     re_matchsub('.', "abc", Sub, [start(2)]).
@@ -526,3 +526,23 @@ add_match(Dict, [Dict.0|List], List).
 add_match2(Dict, [Dict|List], List).
 
 increment(_Match, V0, V1) :- V1 is V0+1.
+
+
+% re_portray(+Stream, +Regex) is det.
+%
+%  Output debug info for a Regex on Stream (used in tests).
+
+re_portray(Regex) :-
+    pcre:re_portray(current_output, Regex).
+
+re_portray_string(Regex, String) :-
+    with_output_to(string(String),
+                   pcre:re_portray(current_output, Regex)).
+
+%  re_portray_match_options(+Stream, +Options) is det.
+%
+% Output debug info from parsing Options on Stream (used in tests).
+
+re_portray_match_options_string(Options, String) :-
+    with_output_to(string(String),
+                   pcre:re_portray_match_options(current_output, Options)).

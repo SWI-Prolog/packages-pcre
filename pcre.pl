@@ -49,27 +49,10 @@
           ]).
 :- autoload(library(apply), [maplist/2, maplist/3]).
 :- autoload(library(error), [must_be/2, existence_error/2]).
-:- autoload(library(dcg/basics), [string/3, eos/2, digit/3, digits/3]).
+:- autoload(library(dcg/basics), [eos/2, digit/3, digits/3]).
 :- autoload(library(lists), [append/3]).
 
-% The foreign language code (pcre4pl.c) defines:
-%    re_config/1,             % ?Config
-%    re_compile/3             % +Pattern, -Regex, +Options
-%    re_match_/3              % +Regex, +String, +Options
-%    re_matchsub_/4           % +Regex, +String, -Sub:dict, +Options
-%    re_fold_/6               % :Goal, +Regex, +String, ?V0, ?V, +Options)
-%  Undocumented predicates for debugging and unit tests, with related
-%  wrapper predicates:
-%    re_portray/2                      % +Stream, +Regex
-%    re_portray_match_options/2        % +Stream, +Options
-%    re_portray_string/2               % +Regex, -String
-%    re_portray_match_options_string/2 % +Regex, -String
 :- use_foreign_library(foreign(pcre4pl)).
-
-:- public re_portray/2,
-    re_portray_match_options/2,
-    re_portray_string/2,
-    re_portray_match_options_string/2.
 
 :- meta_predicate
     re_foldl(3, +, +, ?, ?, +).
@@ -740,25 +723,3 @@ re_flush :-
 %   @error `instantiation_error` if Term is a variable.
 %
 %   @see `man pcreapi` for details
-
-
-% re_portray(+Stream, +Regex) is det.
-%
-%  Output debug info for a Regex on Stream (used in tests).
-
-re_portray(Regex) :-
-    re_portray(current_output, Regex).
-
-re_portray_string(Regex, String) :-
-    with_output_to(string(String),
-                   re_portray(current_output, Regex)).
-
-%  re_portray_match_options(+Stream, +Options) is det.
-%
-% Output debug info from parsing Options on Stream (used in tests).
-
-re_portray_match_options_string(Options, String) :-
-    with_output_to(string(String),
-                   re_portray_match_options(current_output, Options)).
-
-end_of_file.
