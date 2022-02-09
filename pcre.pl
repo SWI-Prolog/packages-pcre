@@ -84,12 +84,14 @@ cache. The cache can be cleared using re_flush/0.
                        empty_atstart(boolean),
                        eol(boolean),
                        newline(oneof([any,anycrlf,cr,lf,crlf])),
-                       start(integer)
+                       start(integer),
+                       pass_to(re_compile/3, 3)
                      ]).
 :- predicate_options(re_compile/3, 3,
                      [ anchored(boolean),
                        auto_capture(boolean),
                        bsr(oneof([anycrlf,unicode])),
+                       capture_type(oneof([atom,string,range])),
                        caseless(boolean),
                        compat(oneof([javascript])),
                        dollar_endonly(boolean),
@@ -101,10 +103,24 @@ cache. The cache can be cleared using re_flush/0.
                        greedy(boolean),
                        multiline(boolean),
                        newline(oneof([any,anycrlf,cr,lf,crlf])),
+                       no_auto_capture(boolean), /* Backward compatibility */
+                       optimise(boolean),
+                       optimize(boolean),
                        ucp(boolean),
                        ungreedy(boolean) % Backward compatibility
                      ]).
-
+:- predicate_options(re_matchsub/4, 4,
+                     [ pass_to(re_match/3, 3)
+                     ]).
+:- predicate_options(re_foldl/6, 6,
+                     [ pass_to(re_match/3, 3)
+                     ]).
+:- predicate_options(re_split/4, 4,
+                     [ pass_to(re_match/3, 3)
+                     ]).
+:- predicate_options(re_replace/5, 5,
+                     [ pass_to(re_match/3, 3)
+                     ]).
 
 %!  re_match(+Regex, +String) is semidet.
 %!  re_match(+Regex, +String, +Options) is semidet.
@@ -116,11 +132,17 @@ cache. The cache can be cleared using re_flush/0.
 %     true.
 %     ```
 %
-%   Defined  Options   are  given   below.   Please  consult   the  PCRE
-%   documentation  for details.   If an  option is  repeated, the  first
-%   value  is  used and  subsequent  values  are ignored.   Unrecognized
-%   options  are ignored.  Unless otherwise  specified, boolean  options
-%   default to `false`.
+%   Defined  Options  are  given  below.   For  details,  see  the  PCRE
+%   documentation.  If  an option is  repeated, the first value  is used
+%   and  subsequent  values  are   ignored.   Unrecognized  options  are
+%   ignored.   Unless otherwise  specified, boolean  options default  to
+%   `false`.
+%
+%   If Regex is a text pattern  (optionally with flags), then any of the
+%   Options for  re_compile/3 can  be used, in  addition to  the Options
+%   listed below. If Regex is the  result of re_compile/3, then only the
+%   following execution-time  Options are recognized and  any others are
+%   ignored:
 %
 %     * anchored(Bool)
 %     If `true`, match only at the first position
@@ -194,9 +216,10 @@ re_match(Regex, String, Options) :-
 %
 %     ```
 %
-%   @arg Options Only _execution_ options are processed.  See re_match/3
-%   for the  set of  options.  _Compilation_ options  must be  passed as
-%   ``/Flags`` to Regex.
+%   @arg Both compilation and execution options are processed.  See
+%   re_compile/3 and re_match/3 for the set of options. In addition,
+%   some compilation options may passed as ``/Flags`` to Regex - see
+%   re_match/3 for the list of flags.
 %
 %   @arg Regex  See re_match/2 for a description of this argument.
 
@@ -352,6 +375,7 @@ typed_sub(name, Haystack, B, L, A, Value) :-
 %   following  will  change an  ISO  8601  format date  (YYYY-MM-DD)  to
 %   American style (m/d/y),  and also remove leading zeros  by using the
 %   `_I` suffix:
+%
 %   ```
 %   re_replace("(?<date> (?<year_I>(?:\\d\\d)?\\d\\d) -
 %               (?<month_I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
@@ -662,19 +686,22 @@ alnum(L) -->
 %   removes   "compiled"   With    arguments   from   re_replace/4   and
 %   re_replace/5).
 
-:- table re_compile/3 as shared.
+:- table re_compiled_/4 as shared.
 
-re_compiled(Regex, Regex, _Options) :-
-    blob(Regex, regex),
-    !.
-re_compiled(Text/Flags, Regex, Options) :- !,
+re_compiled(RegexIn, Regex, Options) :-
+    (   blob(RegexIn, regex)
+    ->  Regex = RegexIn
+    ;   RegexIn = Text/Flags
+    ->  re_compiled_(Text, Flags, Regex, Options)
+    ;   re_compiled_(RegexIn, '', Regex, Options)
+    ).
+
+re_compiled_(Text, Flags, Regex, Options) =>
     must_be(text, Text),
     must_be(atom, Flags),
     re_flags_options(Flags, Options0),
     append(Options0, Options, Options2),
     re_compile(Text, Regex, Options2).
-re_compiled(Text, Regex, Options) :-
-    re_compiled(Text/'', Regex, Options).
 
 re_flags_options(Flags, Options) :-
     atom_chars(Flags, Chars),

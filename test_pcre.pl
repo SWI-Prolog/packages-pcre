@@ -528,9 +528,10 @@ add_match2(Dict, [Dict|List], List).
 increment(_Match, V0, V1) :- V1 is V0+1.
 
 
-% re_portray(+Stream, +Regex) is det.
+%! re_portray(+Stream, +Regex) is det.
 %
 %  Output debug info for a Regex on Stream (used in tests).
+%  (defined in pcre4pl.c)
 
 re_portray(Regex) :-
     pcre:re_portray(current_output, Regex).
@@ -539,9 +540,10 @@ re_portray_string(Regex, String) :-
     with_output_to(string(String),
                    pcre:re_portray(current_output, Regex)).
 
-%  re_portray_match_options(+Stream, +Options) is det.
+%! re_portray_match_options(+Stream, +Options) is det.
 %
 % Output debug info from parsing Options on Stream (used in tests).
+%  (defined in pcre4pl.c)
 
 re_portray_match_options_string(Options, String) :-
     with_output_to(string(String),

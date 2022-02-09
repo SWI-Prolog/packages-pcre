@@ -1294,6 +1294,8 @@ install_pcre4pl(void)
   PL_register_foreign("re_match_",    3, re_match_,    0);
   PL_register_foreign("re_matchsub_", 4, re_matchsub_, 0);
   PL_register_foreign("re_foldl_",    6, re_foldl_,    0);
+  /* The following two are used by test_pcre.pl but are not exported
+     from pcre.pl, so are used with the pcre: module prefix: */
   PL_register_foreign("re_portray",   2, re_portray,   0);
   PL_register_foreign("re_portray_match_options", 2, re_portray_match_options_, 0);
 }
