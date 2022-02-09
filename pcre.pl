@@ -289,7 +289,7 @@ split_range_regex(Pattern, Compiled, Type, Options) =>
     split_range_regex(Pattern, '', Compiled, Type, Options).
 
 split_range_regex(Pattern, Flags, Compiled, Type, Options) =>
-    regex_capture_type_flag_chars(Options, Flags, Chars),
+    regex_capture_type_flag_chars(Flags, Chars, Options),
     split_flags(Chars, Chars1, Type),
     atom_chars(RFlags, [r|Chars1]),
     re_flags_options(RFlags, ROptions),
@@ -396,7 +396,7 @@ re_replace(Pattern, With, String, NewString, Options) :-
         parts_to_output(Type, Parts, NewString)
     ).
 
-regex_capture_type_flag_chars(Options, Flags, Chars) :-
+regex_capture_type_flag_chars(Flags, Chars, Options) :-
     atom_chars(Flags, Chars0),
     % For replace or split, the capture_type must be range, so if a
     % different result is desired, it is specified in the flags. The
@@ -418,7 +418,7 @@ replace_range_regex(Pattern, Compiled, All, Type, Options) =>
     replace_range_regex(Pattern, '', Compiled, All, Type, Options).
 
 replace_range_regex(Pattern, Flags, Compiled, All, Type, Options) =>
-    regex_capture_type_flag_chars(Options, Flags, Chars),
+    regex_capture_type_flag_chars(Flags, Chars, Options),
     replace_flags(Chars, Chars1, All, Type),
     atom_chars(RFlags, [r|Chars1]),
     re_flags_options(RFlags, ROptions),
