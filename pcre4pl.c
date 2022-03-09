@@ -552,7 +552,7 @@ re_config(term_t opt)
 	      case CFG_INTEGER:
 		return PL_unify_integer(arg, val.i);
 	      case CFG_STRING:
-		return PL_unify_atom_chars(arg, val.s);
+		return val.s ? PL_unify_atom_chars(arg, val.s) : FALSE;
 	      default:
 		assert(0);
 	    }

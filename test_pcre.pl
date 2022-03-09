@@ -295,8 +295,10 @@ re_test(config_jit) :-
     re_config(jit(V)),
     must_be(boolean, V).
 re_test(config_jittarget) :-
-    re_config(jittarget(V)),
-    must_be(atom, V).
+    (   re_config(jittarget(V))
+    ->  must_be(atom, V)
+    ;   true			% no JIT support
+    ).
 re_test(config_newline) :-
     re_config(newline(V)),
     must_be(integer, V).
