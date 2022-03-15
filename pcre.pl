@@ -147,7 +147,7 @@ cache. The cache can be cleared using re_flush/0.
 %     * anchored(Bool)
 %     If `true`, match only at the first position
 %     * bol(Bool)
-%     String is the beginning of a line (default `false`) -
+%     String is the beginning of a line (default `true`) -
 %       affects behavior of circumflex metacharacter (`^`).
 %     * bsr(Mode)
 %     If `anycrlf`, \R only matches CR, LF or CRLF.  If `unicode`,
@@ -159,7 +159,8 @@ cache. The cache can be cleared using re_flush/0.
 %     (default `true`)
 %     * eol(Bool)
 %     String is the end of a line -
-%       affects behavior of dollar metacharacter (`$`).
+%       affects behavior of dollar metacharacter (`$`)
+%       (default `true`).
 %     * newline(Mode)
 %     If `any`, recognize any Unicode newline sequence,
 %     if `anycrlf`, recognize CR, LF, and CRLF as newline
@@ -262,13 +263,34 @@ re_matchsub(Regex, String, Subs, Options) :-
 %     ?- re_match_count("a", "aap", X).
 %     X = 2.
 %     ```
-
+%
+%  Here is an example Goal for extracting all the matches with their
+%  offsets within the string:
+%
+%  ```
+%  range_match(Dict, StringIndex-[MatchStart-Substring|List], StringIndex-List) :-
+%      Dict.(StringIndex.index) = MatchStart-MatchLen,
+%      sub_string(StringIndex.string, MatchStart, MatchLen, _, Substring).
+%  ```
+%  And can be used with this query (note the capture_type(range) option,
+%  which is needed by `range_match/3`, and greedy(false) to invert the
+%  meaning of `*?`):
+%  ```
+%  ?- String = "{START} Mary {END} had a {START} little lamb {END}",
+%     re_foldl(range_match,
+%              "{START} *?(?<piece>.*) *?{END}",
+%              String, _{string:String,index:piece}-Matches, _-[],
+%              [capture_type(range),greedy(false)]).
+%  Matches = [8-"Mary", 33-"little lamb"].
+%  ```
 re_foldl(Goal, Regex, String, V0, V, Options) :-
     re_compiled(Regex, Compiled, Options),
     re_foldl_(Compiled, String, Goal, V0, V, Options).
 
 :- public re_call_folder/4.
 
+%! re_call_folder(:Goal, +Pairs, ?V0, ?V1).
+% Used by re_foldl_/6 to call Goal with a dict.
 re_call_folder(Goal, Pairs, V0, V1) :-
     dict_pairs(Dict, re_match, Pairs),
     call(Goal, Dict, V0, V1).

@@ -518,6 +518,23 @@ re_test(wb_2, fixme(javascript_compat)) :-
 % Fix for https://github.com/SWI-Prolog/packages-pcre/issues/6
 re_test(wb_3, Result == "abbraccaddabbra") :-
     re_replace("a(.)"/g, "a$1$1", "abracadabra", Result).
+% TODO: similar tests for all flags - better than checking whether the
+%       flags have been set (using re_portray_string/2).
++re_test(greedy_false, Result == re_match{0:"{START} Mary {END}", 1:" Mary "}) :-
+    re_matchsub("{START}(.*){END}", "{START} Mary {END} had a {START} little lamb {END}", Result, [greedy(false)]).
+
+re_test(greedy_true, Result == re_match{0:"{START} Mary {END} had a {START} little lamb {END}"}, 1:" Mary {END} had a {START} little lamb ") :-
+    re_matchsub("{START}(.*){END}", "{START} Mary {END} had a {START} little lamb {END}", Result, [greedy(true)]).
+
+re_test(greedy_default, Result == re_match{0:"{START} Mary {END} had a {START} little lamb {END}", 1:" Mary {END} had a {START} little lamb "}) :-
+    re_matchsub("{START}(.*){END}", "{START} Mary {END} had a {START} little lamb {END}", Result , []).
+
+re_test(foldl_notgreedy_example, Matches == [8-"Mary", 33-"little lamb"]) :-
+    String = "{START} Mary {END} had a {START} little lamb {END}",
+    re_foldl(range_match,
+             "{START} *?(?<piece>.*) *?{END}",
+             String, _{string:String,index:piece}-Matches, _-[],
+             [capture_type(range),greedy(false)]).
 
 :- end_tests(pcre).
 
@@ -528,6 +545,10 @@ add_match(Dict, [Dict.0|List], List).
 add_match2(Dict, [Dict|List], List).
 
 increment(_Match, V0, V1) :- V1 is V0+1.
+
+range_match(Dict, StringIndex-[MatchStart-Substring|List], StringIndex-List) :-
+    Dict.(StringIndex.index) = MatchStart-MatchLen,
+    sub_string(StringIndex.string, MatchStart, MatchLen, _, Substring).
 
 
 %! re_portray(+Stream, +Regex) is det.
