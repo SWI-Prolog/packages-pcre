@@ -113,6 +113,25 @@ re_test(matchsub4, Sub == re_match{0:"AAP"}) :-
 re_test(matchsub5, Sub == re_match{0:'AAP'}) :-
     re_matchsub("a+p"/ia, "---AAPenootjes", Sub).
 
+re_test(anchored1, Sub == re_match{0:"aaa"}) :-
+    re_matchsub("a+", "aaabc", Sub, [anchored(true)]).
+re_test(anchored2, fail) :-
+    re_matchsub("a+", "xaaabc", _Sub, [anchored(true)]).
+re_test(anchored3, Sub == re_match{0:"aaa"}) :-
+    re_matchsub("a+", "xaaabc", Sub, [anchored(false)]).
+re_test(anchored4, Sub == re_match{0:"aaa"}) :-
+    re_compile("a+", Re, [anchored(false)]),
+    re_matchsub(Re, "xaaabc", Sub, []).
+re_test(anchored5, fail) :-
+    re_compile("a+", Re, [anchored(true)]),
+    re_matchsub(Re, "xaaabc", _Sub, []).
+re_test(anchored6, fail) :-
+    re_compile("a+", Re, []),
+    re_matchsub(Re, "xaaabc", _Sub, [anchored(true)]).
+re_test(anchored7, Sub == re_match{0:"aaa"}) :-
+    re_compile("a+", Re, []),
+    re_matchsub(Re, "xaaabc", Sub, [anchored(false)]).
+
 re_test(compile_option1) :-
     re_compile("a+b", _Re, [compat(javascript)]).
 re_test(compile_option2, error(domain_error(compat_option, qqsv), _)) :-
@@ -135,10 +154,10 @@ re_test(named, [Sub, RegexStr] ==
 	       [re_match{0:"2017-04-20",
 			 date:"2017-04-20",
 			 day:"20",month:"04",year:"2017"},
-		"<regex>(/(?<date> (?<year>(?:\\d\\d)?\\d\\d) -\n\t\t(?<month>\\d\\d) - (?<day>\\d\\d) )/ [EXTENDED NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=4 {0:CAP_STRING 1:date:CAP_STRING 2:year:CAP_STRING 3:month:CAP_STRING 4:day:CAP_STRING})"]) :-
+		"<regex>(/(?<date> (?<year>(?:\\d\\d)?\\d\\d) -\n\t\t(?<month>\\d\\d) - (?<day>\\d\\d) )/ [EXTENDED NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=4 {0:CAP_DEFAULT 1:date:CAP_DEFAULT 2:year:CAP_DEFAULT 3:month:CAP_DEFAULT 4:day:CAP_DEFAULT})"]) :-
     re_compile("(?<date> (?<year>(?:\\d\\d)?\\d\\d) -
 		(?<month>\\d\\d) - (?<day>\\d\\d) )", Re,
-	       [extended]),
+	       [extended(true)]),
     re_matchsub(Re, "2017-04-20", Sub, []),
     re_portray_string(Re, RegexStr).
 re_test(typed1, Sub == re_match{0:"2017-04-20",
@@ -154,6 +173,29 @@ re_test(typed2, Sub == re_match{0:"2017-04-20",
     re_matchsub("(?<date> (?<year_x_I>(?:\\d\\d)?\\d\\d) -
 		 (?<month__I>\\d\\d) - (?<day_I>\\d\\d) )"/x,
 		"2017-04-20", Sub, []).
+re_test(typed3a, Sub == re_match{0:'2017-04-20',
+				 date:'2017-04-20',
+				 day:20,month_:4,year_x:"2017"}) :-
+    % Names with more than one "_", for testing type suffix
+    re_matchsub("(?<date> (?<year_x_S>(?:\\d\\d)?\\d\\d) -
+		 (?<month__I>\\d\\d) - (?<day_I>\\d\\d) )",
+		"2017-04-20", Sub, [extended(true), capture_type(atom)]).
+re_test(typed3b, Sub == re_match{0:'2017-04-20',
+				 date:'2017-04-20',
+				 day:20,month_:4,year_x:"2017"}) :-
+    % Names with more than one "_", for testing type suffix
+    re_compile("(?<date> (?<year_x_S>(?:\\d\\d)?\\d\\d) -
+		 (?<month__I>\\d\\d) - (?<day_I>\\d\\d) )",
+		Re, [extended(true), capture_type(atom)]),
+    re_matchsub(Re, "2017-04-20", Sub, []).
+re_test(typed3c, Sub == re_match{0:"2017-04-20",
+				 date:"2017-04-20",
+				 day:20,month_:4,year_x:"2017"}) :-
+    % Names with more than one "_", for testing type suffix
+    re_compile("(?<date> (?<year_x_S>(?:\\d\\d)?\\d\\d) -
+		 (?<month__I>\\d\\d) - (?<day_I>\\d\\d) )",
+		Re, [extended(true)]),
+    re_matchsub(Re, "2017-04-20", Sub, []).
 re_test(range, Sub == re_match{0:"Name: value", value:6-5}) :-
     re_matchsub(".*:\\s(?<value_R>.*)"/x, "Name: value", Sub, []).
 re_test(capture_string1a, Subs == re_match{0:"abc", 1:"a", 2:"b", 3:"c"}) :-
@@ -329,15 +371,15 @@ re_test(compile_portray_0,
     re_compile(".", Regex, []),
     re_portray_string(Regex, RegexStr).
 re_test(compile_portray_1a,
-        RegexStr == "<regex>(/(.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=1 {0:CAP_STRING 1:CAP_STRING})") :-
+        RegexStr == "<regex>(/(.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=1 {0:CAP_DEFAULT 1:CAP_DEFAULT})") :-
     re_compile("(.)", Regex, []),
     re_portray_string(Regex, RegexStr).
 re_test(compile_portray_1b,
-        RegexStr == "<regex>(/(.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_ATOM] $capture=1 {0:CAP_ATOM 1:CAP_ATOM})") :-
+        RegexStr == "<regex>(/(.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_ATOM] $capture=1 {0:CAP_DEFAULT 1:CAP_DEFAULT})") :-
     re_compile("(.)", Regex, [capture_type(atom)]),
     re_portray_string(Regex, RegexStr).
 re_test(compile_portray_2,
-        RegexStr == "<regex>(/(?<foo>.)([a-z]*)(?<bar_A>.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=3 {0:CAP_STRING 1:foo:CAP_STRING 2:CAP_STRING 3:bar:CAP_ATOM})") :-
+        RegexStr == "<regex>(/(?<foo>.)([a-z]*)(?<bar_A>.)/ [NO_UTF8_CHECK UTF8 NEWLINE_ANYCRLF CAP_STRING] $capture=3 {0:CAP_DEFAULT 1:foo:CAP_DEFAULT 2:CAP_DEFAULT 3:bar:CAP_ATOM})") :-
     re_compile("(?<foo>.)([a-z]*)(?<bar_A>.)", Regex, []),
     re_portray_string(Regex, RegexStr).
 

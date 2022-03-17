@@ -77,7 +77,7 @@ cache. The cache can be cleared using re_flush/0.
 */
 
 :- predicate_options(re_match/3, 3,
-                     [ anchored(boolean),
+                     [ anchored(boolean), % Also re_compile/3
                        bol(boolean),
                        bsr(oneof([anycrlf,unicode])),
                        empty(boolean),
@@ -88,7 +88,7 @@ cache. The cache can be cleared using re_flush/0.
                        pass_to(re_compile/3, 3)
                      ]).
 :- predicate_options(re_compile/3, 3,
-                     [ anchored(boolean),
+                     [ anchored(boolean), % Also re_match/3
                        auto_capture(boolean),
                        bsr(oneof([anycrlf,unicode])),
                        capture_type(oneof([atom,string,range])),

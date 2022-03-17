@@ -45,7 +45,7 @@
 		 *******************************/
 
 typedef enum cap_type /* capture type */
-{ CAP_DEFAULT = 0,
+{ CAP_DEFAULT = 0, /* Use the "global" value for the regex */
   CAP_STRING,
   CAP_ATOM,
   CAP_INTEGER,
@@ -142,6 +142,9 @@ static atom_t ATOM_string;
 static atom_t ATOM_atom;
 static atom_t ATOM_term;
 static atom_t ATOM_range;
+static atom_t ATOM_integer;
+static atom_t ATOM_float;
+static atom_t ATOM_number;
 static atom_t ATOM_version;
 
 
@@ -197,7 +200,7 @@ typedef struct re_subject
   size_t      length;			/* Total length in bytes */
   size_t      charp;			/* Character position */
   size_t      bytep;			/* Byte position */
-  unsigned    flags;			/* Allocation flags */
+  uint32_t    flags;			/* Allocation flags */
 } re_subject;
 
 
@@ -255,7 +258,7 @@ bytep_to_charp(re_subject *subj, size_t bytep)
 #define SUBJ_FLAGS (CVT_ATOM|CVT_STRING|CVT_LIST|REP_UTF8|CVT_EXCEPTION)
 
 static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
-re_get_subject(term_t t, re_subject *subj, unsigned flags)
+re_get_subject(term_t t, re_subject *subj, uint32_t flags)
 { memset(subj, 0, sizeof *subj); /* { NULL, 0, 0, 0, 0 }; */
 
   subj->flags = flags;
@@ -333,18 +336,23 @@ set_flag(term_t arg, re_options_flags *options_flags, uint32_t mask, uint32_t va
 
 typedef struct re_optdef
 { const char *name;
-  unsigned    flag;
-  unsigned    mode; /* RE_COMP, RE_EXEC, RE_NEG */
+  uint32_t    flag;
+  uint32_t    mode; /* RE_COMP, RE_EXEC, RE_NEG, etc. */
   atom_t      atom; /* Initially 0; filled in as-needed by lookup_optdef() */
 } re_optdef;
 
-#define RE_COMP 0x001
-#define RE_EXEC 0x002
-#define RE_NEG  0x004
+#define RE_COMP          0x001
+#define RE_EXEC          0x002
+#define RE_NEG           0x004
+#define RE_COMP_BSR      0x008
+#define RE_COMP_NEWLINE  0x010
+#define RE_COMP_OPTIMISE 0x020
+#define RE_COMP_CAPTURE  0x040
+#define RE_EXEC_START    0x080
 
 
 static const re_optdef*
-lookup_optdef(re_optdef opt_defs[], atom_t name, unsigned mode)
+lookup_optdef(re_optdef opt_defs[], atom_t name, uint32_t mode)
 { re_optdef *def;
   for(def=opt_defs; def->name; def++)
   { if ( !def->atom ) /* lazily fill in atoms in lookup table */
@@ -357,7 +365,7 @@ lookup_optdef(re_optdef opt_defs[], atom_t name, unsigned mode)
 
 
 static int/* bool (FALSE/TRUE), as returned by PL_..._error() */
-lookup_and_apply_optdef(re_optdef opt_defs[], atom_t name, unsigned mode,
+lookup_and_apply_optdef(re_optdef opt_defs[], atom_t name, uint32_t mode,
 			term_t option_term, term_t arg, int mask,
                         re_options_flags *options_flags)
 { const re_optdef *def = lookup_optdef(opt_defs, name, mode);
@@ -389,20 +397,20 @@ static re_optdef re_optdefs[] =
   { NULL, 0}
 };
 
-static re_optdef re_optbsrs[] = /* TODO: verify RE_EXEC: */
-{ { "anycrlf",	       PCRE_BSR_ANYCRLF,      RE_COMP|RE_EXEC },
-  { "unicode",	       PCRE_BSR_UNICODE,      RE_COMP|RE_EXEC },
+static re_optdef re_optbsrs[] =
+{ { "anycrlf",	       PCRE_BSR_ANYCRLF,      RE_COMP_BSR },
+  { "unicode",	       PCRE_BSR_UNICODE,      RE_COMP_BSR },
   { NULL }
 };
 
 #define OPTBSR_MASK (PCRE_BSR_ANYCRLF|PCRE_BSR_UNICODE)
 
-static re_optdef re_optnewlines[] = /* TODO: verify RE_EXEC: */
-{ { "any",	       PCRE_NEWLINE_ANY,      RE_COMP|RE_EXEC },
-  { "anycrlf",	       PCRE_NEWLINE_ANYCRLF,  RE_COMP|RE_EXEC },
-  { "crlf",	       PCRE_NEWLINE_CRLF,     RE_COMP|RE_EXEC },
-  { "lf",	       PCRE_NEWLINE_LF,	      RE_COMP|RE_EXEC },
-  { "cr",	       PCRE_NEWLINE_CR,	      RE_COMP|RE_EXEC },
+static re_optdef re_optnewlines[] =
+{ { "any",	       PCRE_NEWLINE_ANY,      RE_COMP_NEWLINE },
+  { "anycrlf",	       PCRE_NEWLINE_ANYCRLF,  RE_COMP_NEWLINE },
+  { "crlf",	       PCRE_NEWLINE_CRLF,     RE_COMP_NEWLINE },
+  { "lf",	       PCRE_NEWLINE_LF,	      RE_COMP_NEWLINE },
+  { "cr",	       PCRE_NEWLINE_CR,	      RE_COMP_NEWLINE },
   { NULL }
 };
 
@@ -426,7 +434,7 @@ get_arg_1_if_any(term_t head, atom_t *name, size_t *arity, term_t *arg)
 
 
 static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
-re_get_options(term_t options, unsigned mode, re_options_flags *options_flags,
+re_get_options(term_t options, uint32_t mode, re_options_flags *options_flags,
 	       int (*func)(atom_t o, term_t a, void *ctx),
 	       void *ctx)
 { term_t tail = PL_copy_term_ref(options);
@@ -446,13 +454,13 @@ re_get_options(term_t options, unsigned mode, re_options_flags *options_flags,
     if ( name == ATOM_bsr && arg && (mode&RE_COMP) )
     { atom_t aval;
       if ( !PL_get_atom_ex(arg, &aval) ||
-	   !lookup_and_apply_optdef(re_optbsrs, aval, RE_COMP,
+	   !lookup_and_apply_optdef(re_optbsrs, aval, RE_COMP_BSR,
 				    head, 0, OPTBSR_MASK, &bsr_option) )
 	return FALSE;
     } else if ( name == ATOM_newline && arg && (mode&RE_COMP) )
     { atom_t aval;
       if (!PL_get_atom_ex(arg, &aval) ||
-	  !lookup_and_apply_optdef(re_optnewlines, aval, RE_COMP,
+	  !lookup_and_apply_optdef(re_optnewlines, aval, RE_COMP_NEWLINE,
 				   head, 0, OPTNEWLINE_MASK, &newline_option) )
 	return FALSE;
     } else if ( name == ATOM_compat && arg && (mode&RE_COMP) && !(options_flags->seen&PCRE_JAVASCRIPT_COMPAT) )
@@ -601,7 +609,7 @@ set_capture_name_and_type(const char *s, re_data *re, int ci)
     }
   } else
   { len = (size_t)-1; /* nul-terminated string */
-    re->capture_names[ci].type = re->capture_type;
+    re->capture_names[ci].type = CAP_DEFAULT;
   }
   if ( !(re->capture_names[ci].name = PL_new_atom_mbchars(REP_UTF8, len, s)) )
     return FALSE;
@@ -624,7 +632,7 @@ init_capture_map(re_data *re)
     return PL_resource_error("memory");
   for(i=0; i<re->capture_size+1; i++)
   { re->capture_names[i].name = 0;
-    re->capture_names[i].type = re->capture_type;
+    re->capture_names[i].type = CAP_DEFAULT;
   }
   for(i=0; i<name_count; i++, table += name_entry_size)
   { if ( !set_capture_name_and_type(&table[2], re,
@@ -636,10 +644,10 @@ init_capture_map(re_data *re)
 
 
 typedef struct re_compile_options
-{ unsigned	flags; /* RE_STUDY */
+{ uint32_t	optimise_flags; /* RE_STUDY */
   cap_type	capture_type;
-  unsigned	seen_flags;
-  unsigned	seen_cap;
+  uint32_t	seen_flags;
+  uint32_t	seen_cap;
 } re_compile_options;
 
 
@@ -652,10 +660,10 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
     copts->seen_flags |= RE_STUDY;
     switch(effective_bool(arg))
     { case TRUE:
-	copts->flags |= RE_STUDY;
+	copts->optimise_flags |= RE_STUDY;
 	return TRUE;
       case FALSE:
-	copts->flags &= ~RE_STUDY;
+	copts->optimise_flags &= ~RE_STUDY;
 	return TRUE;
       default:
 	return FALSE;
@@ -678,6 +686,12 @@ re_compile_opt(atom_t opt, term_t arg, void *ctx)
       copts->capture_type = CAP_STRING;
     else if ( aval == ATOM_term )
       copts->capture_type = CAP_TERM;
+    else if ( aval == ATOM_integer )
+      copts->capture_type = CAP_INTEGER;
+    else if ( aval == ATOM_float )
+      copts->capture_type = CAP_FLOAT;
+    else if ( aval == ATOM_number )
+      copts->capture_type = CAP_NUMBER;
     else
     { return PL_domain_error("capture_type", arg);
     }
@@ -801,7 +815,7 @@ re_compile(term_t pat, term_t reb, term_t options)
   if ( (re.pcre = pcre_compile2(pats, re.options_flags.flags,
 				&re_error_code, &re_error_msg, &re_error_offset,
 				tableptr) ) )
-  { if ( copts.flags & RE_STUDY )
+  { if ( copts.optimise_flags & RE_STUDY )
     { re.extra = pcre_study(re.pcre, 0, &re_error_msg);
 					/* TBD: handle error */
     }
@@ -826,7 +840,7 @@ re_compile(term_t pat, term_t reb, term_t options)
 
 typedef struct matchopts
 { size_t   start;
-  unsigned seen_start;
+  uint32_t seen_start;
 } matchopts;
 
 
@@ -922,7 +936,7 @@ put_capval(term_t t, re_data *re, re_subject *subject, int i, const int ovector[
   int len = ovector[i*2+1]-ovector[i*2];
   cap_type ctype = re->capture_type;
 
-  if ( re->capture_names && re->capture_names[i].type )
+  if ( re->capture_names && re->capture_names[i].type != CAP_DEFAULT )
     ctype = re->capture_names[i].type;
 
   switch(ctype)
@@ -1274,6 +1288,9 @@ install_pcre4pl(void)
   MKATOM(atom);
   MKATOM(term);
   MKATOM(range);
+  MKATOM(integer);
+  MKATOM(float);
+  MKATOM(number);
   MKATOM(version);
 
   PL_register_foreign("re_config",    1, re_config,    0);
