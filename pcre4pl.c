@@ -76,15 +76,25 @@ typedef struct cap_how /* capture "how" [name + type] */
   cap_type	type;
 } cap_how;
 
+/* When processing options, only the first value for a flag is used;
+   any subsequent values are ignored. The `seen` field tracks this.
+   Some flags use multiple bits (`bsr` and `newline`) - to handle
+   these, the set_flag() function has a `mask` parameter.
+   This struct should be initialized to {0,0}. */
+typedef struct re_options_flags
+{ uint32_t seen;
+  uint32_t flags;
+} re_options_flags;
+
 typedef struct re_data
-{ atom_t	symbol;		/* regex as blob */
-  atom_t	pattern;	/* pattern (as atom) */
-  int		re_options;	/* compilation options */
-  int		capture_size;	/* # captured subpatterns */
-  cap_how      *capture_names;	/* Names for captured data */
-  cap_type	capture_type;	/* Default return for capture */
-  pcre	       *pcre;		/* the compiled expression */
-  pcre_extra   *extra;		/* study result (NULL if not RE_STUDY) */
+{ atom_t	    symbol;		/* regex as blob */
+  atom_t	    pattern;		/* pattern (as atom) */
+  re_options_flags  options_flags;	/* compilation options */
+  int		    capture_size;	/* # captured subpatterns */
+  cap_how          *capture_names;	/* Names for captured data */
+  cap_type	    capture_type;	/* Default return for capture */
+  pcre	           *pcre;		/* the compiled expression */
+  pcre_extra       *extra;		/* study result (NULL if not RE_STUDY) */
 } re_data;
 
 
@@ -302,29 +312,33 @@ effective_bool(term_t arg)
   return TRUE;
 }
 
-
 static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
-set_flag(term_t arg, unsigned *flags, int mask, int value, int invert, unsigned *seen)
-{ if ( *seen&value )
+/* The `mask` has 1 for where the value can be applied; `value` is the
+   flag value (e.g., from re_optdefs[i].flag) and is never zero. `arg`
+   is usesd to determine whether the flag is set to `value` or its
+   inverse, and `invert` uses the inverse of `value`.  */
+set_flag(term_t arg, re_options_flags *options_flags, uint32_t mask, uint32_t value, int invert)
+{ if ( options_flags->seen&mask )
     return TRUE; /* repeated option - ignore */
-  *flags &= mask;
-  *seen |= value;
+  options_flags->flags &= ~mask; /* zero out where the value goes */
+  options_flags->seen |= mask;
   switch( effective_bool(arg) )
   { case TRUE:
       if ( invert )
-	*flags &= ~value;
+	options_flags->flags &= ~value;
       else
-	*flags |= value;
-      return TRUE;
+	options_flags->flags |= value;
+      break;
     case FALSE:
       if ( invert )
-	*flags |= value;
+	options_flags->flags |= value;
       else
-	*flags &= ~value;
-      return TRUE;
+	options_flags->flags &= ~value;
+      break;
     default: /* -1 */
       return FALSE;
   }
+  return TRUE;
 }
 
 
@@ -356,10 +370,10 @@ lookup_optdef(re_optdef opt_defs[], atom_t name, unsigned mode)
 static int/* bool (FALSE/TRUE), as returned by PL_..._error() */
 lookup_and_apply_optdef(re_optdef opt_defs[], atom_t name, unsigned mode,
 			term_t option_term, term_t arg, int mask,
-			unsigned *optp, unsigned *seen)
+                        re_options_flags *options_flags)
 { const re_optdef *def = lookup_optdef(opt_defs, name, mode);
   if ( def )
-    return set_flag(arg, optp, mask, def->flag, def->mode&RE_NEG, seen);
+    return set_flag(arg, options_flags, mask, def->flag, def->mode&RE_NEG);
   return PL_type_error("option", option_term);
 }
 
@@ -394,7 +408,6 @@ static re_optdef re_optbsrs[] = /* TODO: verify RE_EXEC: */
 
 #define OPTBSR_MASK (PCRE_BSR_ANYCRLF|PCRE_BSR_UNICODE)
 
-
 static re_optdef re_optnewlines[] = /* TODO: verify RE_EXEC: */
 { { "any",	       PCRE_NEWLINE_ANY,      RE_COMP|RE_EXEC },
   { "anycrlf",	       PCRE_NEWLINE_ANYCRLF,  RE_COMP|RE_EXEC },
@@ -424,15 +437,16 @@ get_arg_1_if_any(term_t head, atom_t *name, size_t *arity, term_t *arg)
 
 
 static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
-re_get_options(term_t options, unsigned mode, unsigned *optp,
+re_get_options(term_t options, unsigned mode, re_options_flags *options_flags,
 	       int (*func)(atom_t o, term_t a, void *ctx),
 	       void *ctx)
 { term_t tail = PL_copy_term_ref(options);
   term_t head = PL_new_term_ref();
-  unsigned seen = 0;
-  unsigned seen_bsr = FALSE;
-  unsigned seen_newlines = FALSE;
-  *optp = PCRE_NEWLINE_ANYCRLF|PCRE_NO_UTF8_CHECK;
+  re_options_flags bsr_option = {0,0};
+  re_options_flags newline_option = {0,0};
+  options_flags->seen = 0;
+  options_flags->flags = PCRE_NO_UTF8_CHECK;
+  newline_option.flags = PCRE_NEWLINE_ANYCRLF;
 
   while(PL_get_list_ex(tail, head, tail))
   { atom_t name;
@@ -440,34 +454,32 @@ re_get_options(term_t options, unsigned mode, unsigned *optp,
     term_t arg;
     if ( !get_arg_1_if_any(head, &name, &arity, &arg) )
       return FALSE;
-    if ( name == ATOM_bsr && arg && (mode&RE_COMP) && !seen_bsr )
+    if ( name == ATOM_bsr && arg && (mode&RE_COMP) )
     { atom_t aval;
-      seen_bsr = TRUE;
       if ( !PL_get_atom_ex(arg, &aval) ||
 	   !lookup_and_apply_optdef(re_optbsrs, aval, RE_COMP,
-				    head, 0, ~OPTBSR_MASK, optp, &seen) )
+				    head, 0, OPTBSR_MASK, &bsr_option) )
 	return FALSE;
-    } else if ( name == ATOM_newline && arg && (mode&RE_COMP) && !seen_newlines )
+    } else if ( name == ATOM_newline && arg && (mode&RE_COMP) )
     { atom_t aval;
-      seen_newlines = TRUE;
       if (!PL_get_atom_ex(arg, &aval) ||
 	  !lookup_and_apply_optdef(re_optnewlines, aval, RE_COMP,
-				   head, 0, ~OPTNEWLINE_MASK, optp, &seen) )
+				   head, 0, OPTNEWLINE_MASK, &newline_option) )
 	return FALSE;
-    } else if ( name == ATOM_compat && arg && (mode&RE_COMP) && !(seen&PCRE_JAVASCRIPT_COMPAT) )
+    } else if ( name == ATOM_compat && arg && (mode&RE_COMP) && !(options_flags->seen&PCRE_JAVASCRIPT_COMPAT) )
     { atom_t aval;
-      seen |= PCRE_JAVASCRIPT_COMPAT;
+      options_flags->seen |= PCRE_JAVASCRIPT_COMPAT;
       /* No need for a mask - the only flag option is positive */
       if ( !PL_get_atom_ex(arg, &aval) )
 	return FALSE;
       if ( aval == ATOM_javascript )
-	*optp |= PCRE_JAVASCRIPT_COMPAT;
+	options_flags->flags |= PCRE_JAVASCRIPT_COMPAT;
       else
 	return PL_domain_error("compat_option", arg);
     } else
     { const re_optdef *def = lookup_optdef(re_optdefs, name, mode);
       if ( def )
-      { if ( !set_flag(arg, optp, ~def->flag, def->flag, def->mode&RE_NEG, &seen) )
+      { if ( !set_flag(arg, options_flags, def->flag, def->flag, def->mode&RE_NEG) )
 	  return FALSE;
       } else if ( func )
 	{ if ( !(*func)(name, arg, ctx) )
@@ -478,6 +490,7 @@ re_get_options(term_t options, unsigned mode, unsigned *optp,
     }
   }
 
+  options_flags->flags |= bsr_option.flags | newline_option.flags;
   return PL_get_nil_ex(tail);
 }
 
@@ -744,13 +757,13 @@ re_portray(term_t stream, term_t regex)
   if ( !get_re(regex, &re) )
     return FALSE;
   Sfprintf(fd, "<regex>(/%s/ [", PL_atom_chars(re->pattern));
-  write_re_options(fd, "", re->re_options);
+  write_re_options(fd, "", re->options_flags.flags);
   /* TODO: compile_opts&RE_STUDY is in a flag that's not in re_data */
   Sfprintf(fd, " %s] $capture=%d", cap_type_str(re->capture_type), re->capture_size);
   if ( re->capture_size && re->capture_names )
   { int i;
     const char *sep = "";
-    Sfprintf(fd, " {", re->capture_size); Sflush(Suser_error);
+    Sfprintf(fd, " {", re->capture_size);
     for(i=0; i<re->capture_size+1; i++)
     { if ( re->capture_names[i].name )
       { Sfprintf(fd, "%s%d:%s:%s", sep, i, PL_atom_chars(re->capture_names[i].name), cap_type_str(re->capture_names[i].type));
@@ -778,57 +791,49 @@ static foreign_t
 re_compile(term_t pat, term_t reb, term_t options)
 { size_t len;
   char *pats;
-  unsigned re_options;
   re_compile_options copts = {0, CAP_STRING};
-  pcre *pcre;
   int re_error_code;
   const char *re_error_msg;
   int re_error_offset;
   const unsigned char *tableptr = NULL;
+  re_data re;
+  memset(&re, 0, sizeof re);
 
-  if ( !re_get_options(options, RE_COMP, &re_options,
-		       re_compile_opt, &copts) )
+  if ( !re_get_options(options, RE_COMP, &re.options_flags, re_compile_opt, &copts) )
     return FALSE;
+  re.capture_type = copts.capture_type;
+  re.options_flags.flags |= PCRE_UTF8|PCRE_NO_UTF8_CHECK;
 
-  if ( PL_get_nchars(pat, &len, &pats, CVT_ATOM|CVT_STRING|CVT_LIST|REP_UTF8|CVT_EXCEPTION) )
-  { re_options |= (PCRE_UTF8|PCRE_NO_UTF8_CHECK);
-  } else
+  if ( !PL_get_nchars(pat, &len, &pats, CVT_ATOM|CVT_STRING|CVT_LIST|REP_UTF8|CVT_EXCEPTION) )
     return FALSE;
-
   if ( strlen(pats) != len )		/* TBD: escape as \0xx */
     return PL_representation_error("nul_byte");
 
-  if ( (pcre = pcre_compile2(pats, re_options,
-			     &re_error_code, &re_error_msg, &re_error_offset,
-			     tableptr) ) )
-  { re_data *re;
-
-    if ( !(re = PL_malloc(sizeof(*re))) )
-      return FALSE;
-
-    memset(re, 0, sizeof *re);
-
-    re->pcre = pcre;
-    re->re_options = re_options;
-    re->capture_type = copts.capture_type;
-    if ( copts.flags & RE_STUDY )
-    { re->extra = pcre_study(pcre, 0, &re_error_msg);
+  if ( (re.pcre = pcre_compile2(pats, re.options_flags.flags,
+				&re_error_code, &re_error_msg, &re_error_offset,
+				tableptr) ) )
+  { if ( copts.flags & RE_STUDY )
+    { re.extra = pcre_study(re.pcre, 0, &re_error_msg);
 					/* TBD: handle error */
     }
-    if ( !init_capture_map(re) )
-    { re_free(re);
-      /* init_capture_map() has called an appropriate PL_..._error()
+    if ( !init_capture_map(&re) )
+    { /* init_capture_map() has called an appropriate PL_..._error()
 	 to indicate the cause; PL_..._error() returns FALSE, so
 	 return that value. */
       return FALSE;
     }
 
-    if ( (PL_get_atom(pat, &re->pattern)) )
-    { PL_register_atom(re->pattern);
-    } else
-    { re->pattern = PL_new_atom_mbchars(REP_UTF8, len, pats);
+    if ( (PL_get_atom(pat, &re.pattern)) )
+      PL_register_atom(re.pattern);
+    else
+      re.pattern = PL_new_atom_mbchars(REP_UTF8, len, pats);
+    { re_data *re_blob_ptr = PL_malloc(sizeof re);
+      if ( re_blob_ptr)
+      { *re_blob_ptr = re;
+	return PL_unify_blob(reb, &re_blob_ptr, sizeof re_blob_ptr, &pcre_blob);
+      }
+      return FALSE;
     }
-    return PL_unify_blob(reb, &re, sizeof re, &pcre_blob);
   } else
   { return PL_syntax_error(re_error_msg, NULL); /* TBD: location, code */
   }
@@ -860,7 +865,7 @@ re_match_opt(atom_t opt, term_t arg, void *ctx)
 /* This function probably isn't needed -- it's just in case the re_options have
    somehow incorporated the compile options. */
 static void
-re_match_opt_postprocess(unsigned *re_options)
+re_match_opt_postprocess(re_options_flags *options_flags)
 { /* We must *not* "or" the options from regex with the
      match options -- see the pcre_exec() documentation.
        "The only bits that may be set are
@@ -875,11 +880,11 @@ re_match_opt_postprocess(unsigned *re_options)
 	   PCRE_PARTIAL_HARD,
 	   and PCRE_PARTIAL_SOFT."
   */
-  *re_options &= (PCRE_ANCHORED|PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|
-		  PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF|
-		  PCRE_NOTBOL|PCRE_NOTEOL|PCRE_NOTEMPTY| PCRE_NOTEMPTY_ATSTART|
-		  PCRE_NO_START_OPTIMIZE|PCRE_NO_UTF8_CHECK|PCRE_PARTIAL_HARD|
-		  PCRE_PARTIAL_SOFT);
+  options_flags->flags &= (PCRE_ANCHORED|PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|
+			   PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF|
+			   PCRE_NOTBOL|PCRE_NOTEOL|PCRE_NOTEMPTY| PCRE_NOTEMPTY_ATSTART|
+			   PCRE_NO_START_OPTIMIZE|PCRE_NO_UTF8_CHECK|PCRE_PARTIAL_HARD|
+			   PCRE_PARTIAL_SOFT);
 }
 
 
@@ -891,17 +896,17 @@ re_match_opt_postprocess(unsigned *re_options)
 static foreign_t
 re_portray_match_options_(term_t stream, term_t options)
 { IOSTREAM *fd;
-  unsigned re_options = 0;
+  re_options_flags options_flags = {0,0};
   matchopts mopts = {0, FALSE};
   if ( !PL_get_stream(stream, &fd, SIO_OUTPUT) || !PL_acquire_stream(fd) )
     return FALSE;
 
-  if ( !re_get_options(options, RE_EXEC, &re_options,
+  if ( !re_get_options(options, RE_EXEC, &options_flags,
 		       re_match_opt, &mopts) )
     return FALSE;
-  re_match_opt_postprocess(&re_options);
+  re_match_opt_postprocess(&options_flags);
 
-  write_re_options(fd, "", re_options);
+  write_re_options(fd, "", options_flags.flags);
   Sfprintf(fd, " $start=%lu", mopts.start);
   return PL_release_stream(fd);
 }
@@ -1093,16 +1098,15 @@ static foreign_t
 re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
 { re_data *re;
   re_subject subject = { NULL, 0, 0, 0, 0 };
-  matchopts opts = {0};
-  unsigned re_options;
-  unsigned flags = 0;
+  matchopts opts = {0,0};
+  re_options_flags options_flags;
 
-  if ( !re_get_options(options, RE_EXEC, &re_options, re_match_opt, &opts) )
+  if ( !re_get_options(options, RE_EXEC, &options_flags, re_match_opt, &opts) )
     return FALSE;
-  re_match_opt_postprocess(&re_options);
+  re_match_opt_postprocess(&options_flags);
 
   if ( get_re(regex, &re) &&
-       re_get_subject(on, &subject, flags) )
+       re_get_subject(on, &subject, 0) )
   { int rc; /* Every path (to label out) must set rc */
     int ovecbuf[30];
     int ovecsize = 30;
@@ -1134,14 +1138,14 @@ re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
 	   PCRE_PARTIAL_HARD, and
 	   PCRE_PARTIAL_SOFT."
     */
-    re_options &= (PCRE_ANCHORED|PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|
-		   PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF|
-		   PCRE_NOTBOL|PCRE_NOTEOL|PCRE_NOTEMPTY| PCRE_NOTEMPTY_ATSTART|
-		   PCRE_NO_START_OPTIMIZE|PCRE_NO_UTF8_CHECK|PCRE_PARTIAL_HARD|
-		   PCRE_PARTIAL_SOFT);
+    options_flags.flags &= (PCRE_ANCHORED|PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|
+			    PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF|
+			    PCRE_NOTBOL|PCRE_NOTEOL|PCRE_NOTEMPTY| PCRE_NOTEMPTY_ATSTART|
+			    PCRE_NO_START_OPTIMIZE|PCRE_NO_UTF8_CHECK|PCRE_PARTIAL_HARD|
+			    PCRE_PARTIAL_SOFT);
     { int re_rc = pcre_exec(re->pcre, re->extra,
 			    subject.subject, subject.length,
-			    opts.start, re_options,
+			    opts.start, options_flags.flags,
 			    ovector, ovecsize);
 
       if ( re_rc > 0 )			/* match */
@@ -1188,12 +1192,12 @@ re_foldl_(term_t regex, term_t on,
 	  term_t options)
 { re_data *re;
   re_subject subject;
-  unsigned re_options;
+  re_options_flags options_flags;
   matchopts opts = {0};
 
-  if ( !re_get_options(options, RE_EXEC, &re_options, re_match_opt, &opts) )
+  if ( !re_get_options(options, RE_EXEC, &options_flags, re_match_opt, &opts) )
     return FALSE;
-  re_match_opt_postprocess(&re_options);
+  re_match_opt_postprocess(&options_flags);
 
   if ( get_re(regex, &re) &&
        re_get_subject(on, &subject, BUF_STACK) )
@@ -1227,7 +1231,7 @@ re_foldl_(term_t regex, term_t on,
     for(;;)
     { int re_rc = pcre_exec(re->pcre, re->extra,
 			    subject.subject, subject.length,
-			    offset, re_options,
+			    offset, options_flags.flags,
 			    ovector, ovecsize);
 
       if ( re_rc > 0 )
