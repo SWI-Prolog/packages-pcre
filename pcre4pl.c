@@ -102,9 +102,11 @@ static void
 write_re_options(IOSTREAM *s, const char* sep, int re_options);
 
 
-static void
-re_free(re_data *re)
-{ if ( re->pattern )
+static int
+release_pcre(atom_t symbol)
+{ re_data *re = (re_data *)PL_blob_data(symbol, NULL, NULL);
+
+  if ( re->pattern )
     PL_unregister_atom(re->pattern);
   if ( re->pcre )
     pcre_free(re->pcre);
@@ -120,8 +122,7 @@ re_free(re_data *re)
 
     free(re->capture_names);
   }
-
-  PL_free(re);
+  return TRUE;
 }
 
 
@@ -150,26 +151,16 @@ static atom_t ATOM_version;
 
 static void
 acquire_pcre(atom_t symbol)
-{ re_data *re = *(re_data**)PL_blob_data(symbol, NULL, NULL);
+{ re_data *re = (re_data *)PL_blob_data(symbol, NULL, NULL);
 
   re->symbol = symbol;
 }
 
 
 static int
-release_pcre(atom_t symbol)
-{ re_data *re = *(re_data**)PL_blob_data(symbol, NULL, NULL);
-
-  re_free(re);
-
-  return TRUE;
-}
-
-
-static int
 compare_pcres(atom_t a, atom_t b)
-{ re_data *rea = *(re_data**)PL_blob_data(a, NULL, NULL);
-  re_data *reb = *(re_data**)PL_blob_data(b, NULL, NULL);
+{ re_data *rea = (re_data *)PL_blob_data(a, NULL, NULL);
+  re_data *reb = (re_data *)PL_blob_data(b, NULL, NULL);
 
   return ( rea > reb ?  1 :
 	   reb < rea ? -1 : 0
@@ -180,7 +171,7 @@ compare_pcres(atom_t a, atom_t b)
 static int
 write_pcre(IOSTREAM *s, atom_t symbol, int flags)
 { (void)flags; /* unused */
-  re_data *re = *(re_data**)PL_blob_data(symbol, NULL, NULL);
+  re_data *re = (re_data *)PL_blob_data(symbol, NULL, NULL);
   Sfprintf(s, "<regex>(%p)", re);	/* For blob details: re_portray() - re_portray/2 */
   return TRUE;
 }
@@ -284,13 +275,11 @@ re_free_subject(re_subject *subj)
 
 static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
 get_re(term_t t, re_data **re)
-{ void *p;
-  size_t len;
+{ size_t len;
   PL_blob_t *type;
 
-  if ( PL_get_blob(t, &p, &len, &type) && type == &pcre_blob )
-  { re_data **rep = p;
-    *re = *rep;
+  if ( PL_get_blob(t, (void **)re, &len, &type) && type == &pcre_blob )
+  { /* assert(len == sizeof **re); */
     return TRUE;
   }
 
@@ -827,13 +816,7 @@ re_compile(term_t pat, term_t reb, term_t options)
       PL_register_atom(re.pattern);
     else
       re.pattern = PL_new_atom_mbchars(REP_UTF8, len, pats);
-    { re_data *re_blob_ptr = PL_malloc(sizeof re);
-      if ( re_blob_ptr)
-      { *re_blob_ptr = re;
-	return PL_unify_blob(reb, &re_blob_ptr, sizeof re_blob_ptr, &pcre_blob);
-      }
-      return FALSE;
-    }
+    return PL_unify_blob(reb, &re, sizeof re, &pcre_blob);
   } else
   { return PL_syntax_error(re_error_msg, NULL); /* TBD: location, code */
   }
