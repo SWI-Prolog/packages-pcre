@@ -166,6 +166,8 @@ cache. The cache can be cleared using re_flush/0.
 %     if `anycrlf`, recognize CR, LF, and CRLF as newline
 %     sequences, if `cr`, recognize CR, if `lf`, recognize
 %     LF, if `crlf` recognize CRLF as newline.
+%     The default is determined by how PCRE was built, and
+%     can be found by re_config(newline(NewlineDefault)).
 %     * start(+From)
 %     Start at the given character index
 %
@@ -629,6 +631,11 @@ alnum(L) -->
 %   options  are ignored.  Unless otherwise  specified, boolean  options
 %   default to `false`.
 %
+%   The various matching predicates can take  either a Regex _blob_ or a
+%   string  pattern; if  they  are  given a  string  pattern, they  call
+%   re_compile/3 and cache the result; so, there is little reason to use
+%   re_compile/3 directly.
+%
 %     * anchored(Bool)
 %     If `true`, match only at the first position
 %     * auto_capture(Bool)
@@ -758,13 +765,34 @@ re_flush :-
 %   the   form    ``Name(Value)``.    Name    is   derived    from   the
 %   ``PCRE_CONFIG_*``  constant  after   removing  ``PCRE_CONFIG_``  and
 %   mapping the name to  lower case, e.g.  `utf8`, `unicode_properties`,
-%   etc.  Value is a Prolog boolean, integer, or atom.
-%
-%   Finally, the functionality of  pcre_version() is available using the
-%   configuration name `version`.
+%   etc.  Value is a Prolog boolean, integer, or atom. For boolean (1 or
+%   0) values, `true` or `false` is returned.
 %
 %   Term cannot be a variable; re_config/1 doesn't backtrack through all
 %   the possible configuration values.
+%
+%   * bsr
+%     The character  sequences that the  `\R` ecape sequence  matches by
+%     default.
+%   * jit
+%     `true` if just-in-time compiling is available.
+%   * jittarget
+%     A string contains  the name of the architecture for  which the JIT
+%     compiler is configured.
+%   * link_size
+%   * match_limit
+%   * match_limit_recursion
+%   * newline
+%     An integer  whose value  specifies the default  character sequence
+%     that is recognized as meaning "newline".
+%   * posix_malloc_threshold
+%   * stackrecurse
+%   * unicode_properties
+%   * utf8
+%   * parens_limit
+%   * version
+%   The  version information  as an  atom, containing  the PCRE  version
+%   number and release date.
 %
 %   @error `existence_error` if Term isn't defined as a
 %           ``PCRE_CONFIG_*`` constant.
