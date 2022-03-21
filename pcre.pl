@@ -291,8 +291,10 @@ re_foldl(Goal, Regex, String, V0, V, Options) :-
 
 :- public re_call_folder/4.
 
-%! re_call_folder(:Goal, +Pairs, ?V0, ?V1).
-% Used by re_foldl_/6 to call Goal with a dict.
+%   re_call_folder(:Goal, +Pairs, ?V0, ?V1).
+%
+%   Used by re_foldl_/6 to call Goal with a dict.
+
 re_call_folder(Goal, Pairs, V0, V1) :-
     dict_pairs(Dict, re_match, Pairs),
     call(Goal, Dict, V0, V1).
