@@ -1,6 +1,6 @@
 /*  Part of SWI-Prolog
 
-    Author:        Jan Wielemaker
+    Author:        Jan Wielemaker and Peter Ludemann
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
     Copyright (c)  2017-2022, VU University Amsterdam
@@ -33,13 +33,18 @@
 */
 
 /* #define O_DEBUG 1 */
+/* See also: https://www.regular-expressions.info/pcre2.html */
+/* See also: https://github.com/PhilipHazel/pcre2/issues/51 */
+/* See also: https://www.regular-expressions.info/pcre2.html */
+/* See also: https://github.com/i3/i3/issues/4682#issuecomment-973076704 */
+/* See also: https://wiki.php.net/rfc/pcre2-migration */
+#define PCRE2_CODE_UNIT_WIDTH 8
 #include <SWI-Stream.h>
 #include <SWI-Prolog.h>
-#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include <pcre.h>
+#include <pcre2.h>
 
 		 /*******************************
 		 *	      RE STRUCT		*
@@ -58,7 +63,7 @@ typedef enum cap_type /* capture type */
 
 /* For debugging - map cap_type to string */
 static const char *
-cap_type_str(int i)
+cap_type_str(uint32_t i) /* cap_type i */
 { switch( i )
   { case CAP_DEFAULT: return "CAP_DEFAULT";
     case CAP_STRING:  return "CAP_STRING";
@@ -83,48 +88,58 @@ typedef struct cap_how /* capture "how" [name + type] */
    these, the set_flag() function has a `mask` parameter.
    This struct should be initialized to {0,0}.
 */
+
 typedef struct re_options_flags
 { uint32_t seen;
   uint32_t flags;
 } re_options_flags;
 
 /* The data in a "regex" blob. This is created by re_compile() and a
-   local copy (see get_re_copy()) is used by the matching functions.
+   local copy is used by the matching functions (see get_re_copy()).
 
    The flags don't need to be kept, but they're convenient for
    processing.  When get_re_copy() makes a local copy, it clears the
-   flags that are specific to pcre_exec (match) - exec_options_flags,
+   flags that are specific to pcre2_match() - match_options_flags,
    start_flags.
 */
 typedef struct re_data
-{ atom_t	    pattern;		/* pattern (as atom) */
+{ atom_t            pattern;		/* pattern (as atom) */
   re_options_flags  compile_options_flags;
-  re_options_flags  capture_type;	/* Default return for capture: cap_type */
-  re_options_flags  optimise_flags;
-  re_options_flags  exec_options_flags;
-  re_options_flags  start_flags;        /* The start position (int) - an "exec" flag */
-  int		    capture_size;	/* # captured subpatterns */
+  re_options_flags  capture_type;	/* Default capture_type: cap_type */
+  re_options_flags  optimise_flags;     /* Turns on JIT */
+  re_options_flags  jit_options_flags;
+  re_options_flags  compile_ctx_flags;
+  re_options_flags  compile_bsr_flags;
+  re_options_flags  compile_newline_flags;
+  re_options_flags  match_options_flags;
+  re_options_flags  start_flags;        /* The start position (int) - a "match" flag */
+  uint32_t          capture_size;	/* # captured subpatterns */
   cap_how          *capture_names;	/* Names for captured data */
-  pcre	           *pcre;		/* the compiled expression */
-  pcre_extra       *extra;		/* pcre_study() result, if any */
+  pcre2_code_8     *pcre2_code;		/* the compiled expression */
 } re_data;
-/* The start position is an int in pcre.h: */
-#define OPTSTART_MASK INT_MAX
 
+/* The start position is PCRE2_SIZE in pcre2.h: */
+/* TODO: Our flag (which contains the size) is only 32 bits but PCRE2 allows 64 bits */
+#define OPTSTART_MASK ((uint32_t)PCRE2_SIZE_MAX)
 
 static void
 init_re_data(re_data *re)
 { memset(re, 0, sizeof *re);
-  /* See also get_re_get_copy() */
-  re->compile_options_flags.flags = PCRE_UTF8|PCRE_NO_UTF8_CHECK;
-  re->exec_options_flags.flags = PCRE_NO_UTF8_CHECK;
+  /* See also get_re_copy() */
+  /* PCRE2_NO_UTF_CHECK means that the pattern string (for compile)
+     and subject string (for match) isn't checked for validity; this
+     gives a small performance improvement - we simply trust
+     SWI-Prolog to do the right thing with UTF8 strings. (The PCRE2
+     documentation warns of undefined behavior, including crashes or
+     loops when given invalid UTF). If desired, the test can
+     explicitly be turned on by utf_check(true). */
+  re->compile_options_flags.flags = PCRE2_UTF|PCRE2_NO_UTF_CHECK;
+  re->match_options_flags.flags = PCRE2_NO_UTF_CHECK;
   re->capture_type.flags = CAP_STRING;
 }
 
-
 static void
-write_re_options(IOSTREAM *s, const char* sep, uint32_t re_options);
-
+write_re_options(IOSTREAM *s, const char **sep, const re_data *re);
 
 static int
 release_pcre(atom_t symbol)
@@ -132,10 +147,9 @@ release_pcre(atom_t symbol)
 
   if ( re->pattern )
     PL_unregister_atom(re->pattern);
-  pcre_free(re->pcre);
-  pcre_free_study(re->extra);
+  pcre2_code_free(re->pcre2_code);
   if ( re->capture_names )
-  { int i;
+  { uint32_t i;
 
     for(i=0; i<re->capture_size+1; i++)
     { if ( re->capture_names[i].name )
@@ -150,10 +164,6 @@ release_pcre(atom_t symbol)
 
 static functor_t FUNCTOR_pair2;		/* -/2 */
 
-/* Each ATOM_xxx definition has a corresponding MKATOM(xxx) in
-   install_pcre4pl(). */
-static atom_t ATOM_version;
-
 
 		 /*******************************
 		 *	  SYMBOL WRAPPER	*
@@ -165,7 +175,7 @@ compare_pcres(atom_t a, atom_t b)
 { re_data *rea = (re_data *)PL_blob_data(a, NULL, NULL);
   re_data *reb = (re_data *)PL_blob_data(b, NULL, NULL);
 
-  /* TODO: Is this stable (e.g., if the blob is moved around in memory) */
+  /* TODO: Is this stable (e.g., if the blob is moved around in memory)? */
   /*       Use PL_compare(PL_get_atom(rea->pattern), PL_get_atom(reb->pattern) ? */
   return ( rea > reb ?  1 :
 	   reb < rea ? -1 : 0
@@ -175,14 +185,14 @@ compare_pcres(atom_t a, atom_t b)
 
 static int
 write_pcre(IOSTREAM *s, atom_t symbol, int flags)
-{ (void)flags; /* unused */
+{ (void)flags; /* unused arg */
   re_data *re = (re_data *)PL_blob_data(symbol, NULL, NULL);
   Sfprintf(s, "<regex>(%p)", re);	/* For blob details: re_portray() - re_portray/2 */
   return TRUE;
 }
 
 
-static PL_blob_t pcre_blob =
+static PL_blob_t pcre2_blob =
 { PL_BLOB_MAGIC,
   0,
   "regex",
@@ -271,11 +281,6 @@ re_get_subject(term_t t, re_subject *subj, unsigned int alloc_flags)
   return PL_get_nchars(t, &subj->length, &subj->subject, alloc_flags|GET_NCHARS_FLAGS);
 }
 
-static void
-re_free_subject(re_subject *subj)
-{ (void)subj; /* unused */
-}
-
 
 
 		 /*******************************
@@ -287,7 +292,7 @@ get_re(term_t t, re_data **re)
 { size_t len;
   PL_blob_t *type;
 
-  if ( PL_get_blob(t, (void **)re, &len, &type) && type == &pcre_blob )
+  if ( PL_get_blob(t, (void **)re, &len, &type) && type == &pcre2_blob )
   { /* assert(len == sizeof **re); */
     return TRUE;
   }
@@ -297,24 +302,24 @@ get_re(term_t t, re_data **re)
 }
 
 /* Make a copy of the data in a regex blob, clearing the flags that
-   are specific to pcre_exec() (match). */
+   are specific to pcre2_match(). */
 static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
 get_re_copy(term_t t, re_data *re)
 { re_data *re_ptr;
   if ( !get_re(t, &re_ptr) )
     return FALSE;
   *re = *re_ptr;
-  /* Initialize the "exec" flags */
+  /* Initialize the "match" flags - see also init_re_data() */
   /* TODO: Combine with init_re_data(), for defaults */
-  re->exec_options_flags.seen = 0;
-  re->exec_options_flags.flags = PCRE_NO_UTF8_CHECK;
+  re->match_options_flags.seen = 0;
+  re->match_options_flags.flags = PCRE2_NO_UTF_CHECK;
   re->start_flags.seen = 0;
   re->start_flags.flags = 0;
   return TRUE;
 }
 
 
-#define RE_STUDY 0x0001
+#define RE_OPTIMISE 0x0001
 
 static int /* FALSE/TRUE or -1 for error */
 effective_bool(term_t arg)
@@ -363,20 +368,23 @@ set_flag(term_t arg, re_options_flags *options_flags, uint32_t mask, uint32_t va
 
 typedef struct re_optdef
 { const char *name;
-  uint32_t    flag;
-  uint32_t    mode; /* RE_COMP_xxx, RE_EXEC_xxx, RE_NEG */
+  uint32_t    flag; /* Flag in pcre2.h */
+  uint32_t    mode; /* RE_COMP_xxx, RE_MATCH_xxx, RE_NEG, etc. */
   atom_t      atom; /* Initially 0; filled in as-needed by lookup_optdef() */
 } re_optdef;
 
 #define RE_NEG           0x0001
 #define RE_COMP_BOOL     0x0010
-#define RE_COMP_BSR      0x0020
-#define RE_COMP_NEWLINE  0x0040
-#define RE_COMP_OPTIMISE 0x0080
-#define RE_COMP_COMPAT   0x0100
+#define RE_COMP_BSR      0x0020  /* re_data.compile_options - \R */
+#define RE_COMP_NEWLINE  0x0040  /* re_data.compile_options - newilne */
+#define RE_COMP_OPTIMISE 0x0080  /* TODO: see also RE_COMPJIT_BOOL */
+#define RE_COMP_COMPAT   0x0100  /* backward compatibility */
 #define RE_COMP_CAPTURE  0x0200
-#define RE_EXEC_BOOL     0x1000
-#define RE_EXEC_START    0x2000
+#define RE_COMPCTX_BOOL  0x0400  /* re_data.compile_ctx_flags */
+#define RE_COMPJIT_BOOL  0x0800  /* for pcre2_jit_compile() */
+#define RE_MATCH_BOOL    0x1000  /* re_data.match_options */
+#define RE_MATCH_START   0x2000
+#define RE_SUBS_BOOL     0x4000  /* for pcre2_substitute() */
 
 
 static const re_optdef*
@@ -413,59 +421,116 @@ lookup_and_apply_optdef_arg(re_optdef opt_defs[], atom_t name,
 
 
 static re_optdef re_optdefs[] =
-{ { "anchored",	       PCRE_ANCHORED,	      RE_COMP_BOOL|RE_EXEC_BOOL },
-  { "auto_capture",    PCRE_NO_AUTO_CAPTURE,  RE_COMP_BOOL|RE_NEG },
-  { "bol",	       PCRE_NOTBOL,	      RE_EXEC_BOOL|RE_NEG },
-  { "bsr",             0,                     RE_COMP_BSR },
-  { "caseless",	       PCRE_CASELESS,	      RE_COMP_BOOL },
-  { "capture_type",    0,                     RE_COMP_CAPTURE },
-  { "compat",          0,                     RE_COMP_COMPAT },
-  { "dollar_endonly",  PCRE_DOLLAR_ENDONLY,   RE_COMP_BOOL },
-  { "dotall",	       PCRE_DOTALL,	      RE_COMP_BOOL },
-  { "dupnames",	       PCRE_DUPNAMES,	      RE_COMP_BOOL },
-  { "empty",	       PCRE_NOTEMPTY,	      RE_EXEC_BOOL|RE_NEG },
-  { "empty_atstart",   PCRE_NOTEMPTY_ATSTART, RE_EXEC_BOOL|RE_NEG },
-  { "eol",	       PCRE_NOTEOL,	      RE_EXEC_BOOL|RE_NEG },
-  { "extended",	       PCRE_EXTENDED,	      RE_COMP_BOOL },
-  { "extra",	       PCRE_EXTRA,	      RE_COMP_BOOL },
-  { "firstline",       PCRE_FIRSTLINE,	      RE_COMP_BOOL },
-  { "greedy",	       PCRE_UNGREEDY,	      RE_COMP_BOOL|RE_NEG },
-  { "multiline",       PCRE_MULTILINE,	      RE_COMP_BOOL },
-  { "newline",         0,                     RE_COMP_NEWLINE },
-  { "no_auto_capture", PCRE_NO_AUTO_CAPTURE,  RE_COMP_BOOL }, /* backwards compatibility */
-  { "optimise",        0,                     RE_COMP_OPTIMISE },
-  { "optimize",        0,                     RE_COMP_OPTIMISE },
-  { "start",           0,                     RE_EXEC_START },
-  { "ucp",	       PCRE_UCP,	      RE_COMP_BOOL },
-  { "ungreedy",	       PCRE_UNGREEDY,	      RE_COMP_BOOL }, /* backwards compatibility */
+{ /* Those with flag==0 are for options with names or numbers: */
+  { "bsr",           0, RE_COMP_BSR },
+  { "bsr2",          0, RE_COMP_BSR },
+  { "capture_type",  0, RE_COMP_CAPTURE },
+  { "compat",        0, RE_COMP_COMPAT },
+  { "newline",       0, RE_COMP_NEWLINE },
+  { "newline2",      0, RE_COMP_NEWLINE },
+  { "optimise",      0, RE_COMP_OPTIMISE },
+  { "optimize",      0, RE_COMP_OPTIMISE },
+  { "start",         0, RE_MATCH_START },
+
+  /* The following are in the same order as in pcre2.h, to make it easy to compare them */
+  { "anchored",		    PCRE2_ANCHORED,		RE_COMP_BOOL|RE_MATCH_BOOL },
+  { "utf_check",	    PCRE2_NO_UTF_CHECK,		RE_COMP_BOOL|RE_MATCH_BOOL },
+  { "endanchored",	    PCRE2_ENDANCHORED,		RE_COMP_BOOL|RE_MATCH_BOOL },
+
+  { "allow_empty_class",    PCRE2_ALLOW_EMPTY_CLASS,	RE_COMP_BOOL },
+  { "alt_bsux",		    PCRE2_ALT_BSUX,		RE_COMP_BOOL },
+  { "auto_callout",	    PCRE2_AUTO_CALLOUT,		RE_COMP_BOOL },
+  { "caseless",		    PCRE2_CASELESS,		RE_COMP_BOOL },
+  { "dollar_endonly",	    PCRE2_DOLLAR_ENDONLY,	RE_COMP_BOOL },
+  { "dotall",		    PCRE2_DOTALL,		RE_COMP_BOOL },
+  { "dupnames",		    PCRE2_DUPNAMES,		RE_COMP_BOOL },
+  { "extended",		    PCRE2_EXTENDED,		RE_COMP_BOOL },
+  { "firstline",	    PCRE2_FIRSTLINE,		RE_COMP_BOOL },
+  { "match_unset_backref",  PCRE2_MATCH_UNSET_BACKREF,	RE_COMP_BOOL },
+  { "multiline",	    PCRE2_MULTILINE,		RE_COMP_BOOL },
+  { "never_ucp",	    PCRE2_NEVER_UCP,		RE_COMP_BOOL },
+  { "never_utf",	    PCRE2_NEVER_UTF,		RE_COMP_BOOL },
+  { "auto_capture",	    PCRE2_NO_AUTO_CAPTURE,	RE_COMP_BOOL|RE_NEG },
+  { "no_auto_capture",	    PCRE2_NO_AUTO_CAPTURE,	RE_COMP_BOOL },	   /* backwards compatibility */
+  { "auto_possess",	    PCRE2_NO_AUTO_POSSESS,	RE_COMP_BOOL|RE_NEG },
+  { "dotstar_anchor",       PCRE2_NO_DOTSTAR_ANCHOR,	RE_COMP_BOOL|RE_NEG },
+  { "start_optimize",       PCRE2_NO_START_OPTIMIZE,	RE_COMP_BOOL|RE_NEG },
+  { "ucp",		    PCRE2_UCP,			RE_COMP_BOOL },
+  { "greedy",		    PCRE2_UNGREEDY,		RE_COMP_BOOL|RE_NEG },
+  { "ungreedy",		    PCRE2_UNGREEDY,		RE_COMP_BOOL },  /* backwards compatibility */
+  { "utf",		    PCRE2_UTF,			RE_COMP_BOOL },
+  { "never_backslash_c",    PCRE2_NEVER_BACKSLASH_C,	RE_COMP_BOOL },
+  { "alt_circumflex",	    PCRE2_ALT_CIRCUMFLEX,	RE_COMP_BOOL },
+  { "alt_verbnames",	    PCRE2_ALT_VERBNAMES,	RE_COMP_BOOL },
+  { "use_offset_limit",	    PCRE2_USE_OFFSET_LIMIT,	RE_COMP_BOOL },
+  { "extended_more",	    PCRE2_EXTENDED_MORE,	RE_COMP_BOOL },
+  { "literal",		    PCRE2_LITERAL,		RE_COMP_BOOL },
+  { "match_invalid_utf",    PCRE2_MATCH_INVALID_UTF,	RE_COMP_BOOL },
+
+  { "extra_allow_surrogate_escapes", PCRE2_EXTRA_ALLOW_SURROGATE_ESCAPES, RE_COMPCTX_BOOL },
+  { "extra_bad_escape_is_literal",   PCRE2_EXTRA_BAD_ESCAPE_IS_LITERAL,	  RE_COMPCTX_BOOL },
+  { "extra_match_word",	             PCRE2_EXTRA_MATCH_WORD,		  RE_COMPCTX_BOOL },
+  { "extra_match_line",              PCRE2_EXTRA_MATCH_LINE,		  RE_COMPCTX_BOOL },
+  { "extra_escaped_cr_is_lf",        PCRE2_EXTRA_ESCAPED_CR_IS_LF,	  RE_COMPCTX_BOOL },
+  { "extra_alt_bsux",                PCRE2_EXTRA_ALT_BSUX,		  RE_COMPCTX_BOOL },
+
+  { "jit_complete",     PCRE2_JIT_COMPLETE, 	RE_COMPJIT_BOOL },
+  { "jit_partial_soft", PCRE2_JIT_PARTIAL_SOFT,	RE_COMPJIT_BOOL },
+  { "jit_partial_hard", PCRE2_JIT_PARTIAL_HARD,	RE_COMPJIT_BOOL },
+  { "jit_invalid_utf",  PCRE2_JIT_INVALID_UTF ,	RE_COMPJIT_BOOL },
+
+  /* Some of the follwoing are for pcre2_dfa_match() or
+     pcre2_substitute(), but they're all in the same flag */
+  { "bol",                        PCRE2_NOTBOL,                     RE_MATCH_BOOL|RE_NEG },
+  { "eol",                        PCRE2_NOTEOL,                     RE_MATCH_BOOL|RE_NEG },
+  { "empty",                      PCRE2_NOTEMPTY,                   RE_MATCH_BOOL|RE_NEG },
+  { "empty_atstart",              PCRE2_NOTEMPTY_ATSTART,           RE_MATCH_BOOL|RE_NEG },
+  { "partial_soft",               PCRE2_PARTIAL_SOFT,               RE_MATCH_BOOL },
+  { "partial_hard",               PCRE2_PARTIAL_HARD,               RE_MATCH_BOOL },
+  { "dfa_restart",                PCRE2_DFA_RESTART,                RE_MATCH_BOOL },
+  { "dfa_shortest",               PCRE2_DFA_SHORTEST,               RE_MATCH_BOOL },
+  { "substitute_global",          PCRE2_SUBSTITUTE_GLOBAL,          RE_MATCH_BOOL },
+  { "substitute_extended",        PCRE2_SUBSTITUTE_EXTENDED,        RE_MATCH_BOOL },
+  { "substitute_unset_empty",     PCRE2_SUBSTITUTE_UNSET_EMPTY,     RE_MATCH_BOOL },
+  { "substitute_unknown_unset",   PCRE2_SUBSTITUTE_UNKNOWN_UNSET,   RE_MATCH_BOOL },
+  { "substitute_overflow_length", PCRE2_SUBSTITUTE_OVERFLOW_LENGTH, RE_MATCH_BOOL },
+  { "jit",                        PCRE2_NO_JIT,                     RE_MATCH_BOOL|RE_NEG }, /* TODO: see comment in pcre2.h */
+  { "copy_matched_subject",       PCRE2_COPY_MATCHED_SUBJECT,       RE_MATCH_BOOL },
+
+  /* TODO: PCRE2_CONVERT_xxx if we support (experimental) pcre2_pattern_convert() */
+
   { NULL }
 };
 
 static re_optdef re_optbsrs[] =
-{ { "anycrlf",	       PCRE_BSR_ANYCRLF,      RE_COMP_BSR },
-  { "unicode",	       PCRE_BSR_UNICODE,      RE_COMP_BSR },
+{ { "anycrlf",	       PCRE2_BSR_ANYCRLF,      RE_COMP_BSR },
+  { "unicode",	       PCRE2_BSR_UNICODE,      RE_COMP_BSR },
   { NULL }
 };
 
-#define OPTBSR_MASK (PCRE_BSR_ANYCRLF|PCRE_BSR_UNICODE)
+#define OPTBSR_MASK (PCRE2_BSR_ANYCRLF|PCRE2_BSR_UNICODE)
+
 
 static re_optdef re_optnewlines[] =
-{ { "any",	       PCRE_NEWLINE_ANY,      RE_COMP_NEWLINE },
-  { "anycrlf",	       PCRE_NEWLINE_ANYCRLF,  RE_COMP_NEWLINE },
-  { "crlf",	       PCRE_NEWLINE_CRLF,     RE_COMP_NEWLINE },
-  { "lf",	       PCRE_NEWLINE_LF,	      RE_COMP_NEWLINE },
-  { "cr",	       PCRE_NEWLINE_CR,	      RE_COMP_NEWLINE },
+/* These are in the same order as in pcre2.h, to make it easy to compare them */
+{ { "cr",		    PCRE2_NEWLINE_CR,		RE_COMP_NEWLINE },
+  { "lf",		    PCRE2_NEWLINE_LF,		RE_COMP_NEWLINE },
+  { "crlf",		    PCRE2_NEWLINE_CRLF,		RE_COMP_NEWLINE },
+  { "any",		    PCRE2_NEWLINE_ANY,		RE_COMP_NEWLINE },
+  { "anycrlf",		    PCRE2_NEWLINE_ANYCRLF,	RE_COMP_NEWLINE },
+  { "nul",		    PCRE2_NEWLINE_NUL,		RE_COMP_NEWLINE },
   { NULL }
 };
 
-#define OPTNEWLINE_MASK (PCRE_NEWLINE_CR|PCRE_NEWLINE_LF|PCRE_NEWLINE_CRLF|PCRE_NEWLINE_ANY|PCRE_NEWLINE_ANYCRLF)
+#define OPTNEWLINE_MASK (PCRE2_NEWLINE_CR|PCRE2_NEWLINE_LF|PCRE2_NEWLINE_CRLF|PCRE2_NEWLINE_ANY|PCRE2_NEWLINE_ANYCRLF)
 
+/* This had "javascript" for PCRE1; the option doesn't exist in PCRE2,
+   so this empty array causes an error for compat(javascript). */
 static re_optdef re_optcompats[] =
-{ { "javascript",      PCRE_JAVASCRIPT_COMPAT, RE_COMP_COMPAT },
-  { NULL }
+{ { NULL }
 };
 
-#define OPTCOMPAT_MASK PCRE_JAVASCRIPT_COMPAT
+#define OPTCOMPAT_MASK 0
 
 static re_optdef re_optcaptures[] =
 { { "atom",    CAP_ATOM,    RE_COMP_CAPTURE },
@@ -496,10 +561,31 @@ get_arg_1_if_any(term_t head, atom_t *name, size_t *arity, term_t *arg)
   return PL_type_error("option", head);
 }
 
+static int /* bol (FALSE/TRUE), as returned by PL_...error() */
+ensure_compile_context(pcre2_compile_context **compile_ctx)
+{ if ( !*compile_ctx )
+    *compile_ctx = pcre2_compile_context_create(NULL);
+  if ( !*compile_ctx )
+    return PL_resource_error("memory");
+  return TRUE;
+}
 
-/* re_get_options assumes that re has been initialized (init_re_data) */
+
+/* re_get_options assumes that re has been initialized by init_re_data() */
+/* This is called in two ways:
+   - re_compile: a new re_data (from init_re_data())
+   - re_matchsub/re_foldl: a re_data that's already been set up by
+     re_compile - it's kept as part of the blob - but with initialized
+     match options (from get_re_copy()). If the same options list is
+     used by both compile and match, the compile-only options will
+     already have "seen" flags, so they'll be skipped; only the match
+     options will be processed. Any new compile options will be
+     processed but there's nothing in the matching code that uses
+     them, nor any check that they're ignored.
+*/
 static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
-re_get_options(term_t options, re_data *re)
+re_get_options(term_t options, re_data *re,
+	       pcre2_compile_context **compile_ctx) /* Can be NULL; caller must free */
 { term_t tail = PL_copy_term_ref(options);
   term_t head = PL_new_term_ref();
 
@@ -517,18 +603,18 @@ re_get_options(term_t options, re_data *re)
 	{ if ( !set_flag(arg, &re->compile_options_flags, def->flag, def->flag, def->mode&RE_NEG) )
 	    return FALSE;
 	}
-	if ( def->mode&RE_EXEC_BOOL )
-	{ if ( !set_flag(arg, &re->exec_options_flags, def->flag, def->flag, def->mode&RE_NEG) )
+	if ( def->mode&RE_MATCH_BOOL )
+	{ if ( !set_flag(arg, &re->match_options_flags, def->flag, def->flag, def->mode&RE_NEG) )
 	    return FALSE;
 	}
 	if ( def->mode&RE_COMP_BSR )
 	{ if ( !lookup_and_apply_optdef_arg(re_optbsrs, arg,
-                                            head, 0, OPTBSR_MASK, &re->compile_options_flags) )
+					    head, 0, OPTBSR_MASK, &re->compile_bsr_flags) )
 	    return FALSE;
 	}
 	if ( def->mode&RE_COMP_NEWLINE )
 	{ if ( !lookup_and_apply_optdef_arg(re_optnewlines, arg,
-					    head, 0, OPTNEWLINE_MASK, &re->compile_options_flags) )
+					    head, 0, OPTNEWLINE_MASK, &re->compile_newline_flags) )
 	    return FALSE;
 	}
 	if ( def->mode&RE_COMP_COMPAT )
@@ -542,19 +628,28 @@ re_get_options(term_t options, re_data *re)
 	    return FALSE;
 	}
 	if ( def->mode&RE_COMP_OPTIMISE )
-	{ if ( !set_flag(arg, &re->optimise_flags, RE_STUDY, RE_STUDY, def->mode&RE_NEG) )
+	{ if ( !set_flag(arg, &re->optimise_flags, RE_OPTIMISE, RE_OPTIMISE, def->mode&RE_NEG) )
 	    return FALSE;
 	}
-	if ( def->mode&RE_EXEC_START ) /* TODO: generalize set_flag() and remove duplicate code */
+	if ( def->mode&RE_COMPCTX_BOOL )
+	{ if ( !set_flag(arg, &re->compile_ctx_flags, def->flag, def->flag, def->mode&RE_NEG) )
+	    return FALSE;
+	}
+	if ( def->mode&RE_COMPJIT_BOOL )
+	{ if ( !set_flag(arg, &re->jit_options_flags, def->flag, def->flag, def->mode&RE_NEG) )
+	    return FALSE;
+	}
+	if ( def->mode&RE_MATCH_START ) /* TODO: generalize set_flag() and remove duplicate code */
 	{ uint64_t start_value;
 	  if ( !PL_get_uint64_ex(arg, &start_value) )
 	    return FALSE;
-	  if ( start_value > OPTSTART_MASK )
+	  if ( start_value > (uint64_t)OPTSTART_MASK )
 	    return PL_domain_error("int32", arg);
-	  if ( !(re->start_flags.seen&OPTSTART_MASK) )
-	  { re->start_flags.seen |= OPTSTART_MASK;
-	    re->start_flags.flags &= ~OPTSTART_MASK; /* zero out where the value goes */
-	    re->start_flags.flags |= start_value;
+	  /* TODO: Use set_flags() style of checking "seen" etc */
+	  /* TODO: allow 64-bit sizes */
+	  if ( !(re->start_flags.seen) )
+	  { re->start_flags.seen = 1;
+	    re->start_flags.flags = start_value;
 	  }
 	}
       } /* else: ignore unknown option */
@@ -572,7 +667,11 @@ re_get_options(term_t options, re_data *re)
 typedef enum re_config_type
 { CFG_INTEGER,
   CFG_BOOL,
-  CFG_STRING
+  CFG_STRINGBUF,
+  CFG_BSR,
+  CFG_NEWLINE,
+  CFG_TRUE,
+  CFG_INVALID
 } re_config_type;
 
 
@@ -583,21 +682,34 @@ typedef struct re_config_opt
   atom_t	  atom; /* Initially 0; filled in as-needed by re_config() */
 } re_config_opt;
 
+/* Items with id == -1 are for backwards compatibility with PCRE1 */
+/* "bsr" and "newline" have been removed because they return different things now */
 static re_config_opt cfg_opts[] =
-{ { "bsr",		      PCRE_CONFIG_BSR,			  CFG_INTEGER },
-  { "jit",		      PCRE_CONFIG_JIT,			  CFG_BOOL },
-  { "jittarget",	      PCRE_CONFIG_JITTARGET,		  CFG_STRING },
-  { "link_size",	      PCRE_CONFIG_LINK_SIZE,		  CFG_INTEGER },
-  { "match_limit",	      PCRE_CONFIG_MATCH_LIMIT,		  CFG_INTEGER },
-  { "match_limit_recursion",  PCRE_CONFIG_MATCH_LIMIT_RECURSION,  CFG_INTEGER },
-  { "newline",		      PCRE_CONFIG_NEWLINE,		  CFG_INTEGER },
-  { "posix_malloc_threshold", PCRE_CONFIG_POSIX_MALLOC_THRESHOLD, CFG_INTEGER },
-  { "stackrecurse",	      PCRE_CONFIG_STACKRECURSE,		  CFG_BOOL },
-  { "unicode_properties",     PCRE_CONFIG_UNICODE_PROPERTIES,	  CFG_BOOL },
-  { "utf8",		      PCRE_CONFIG_UTF8,			  CFG_BOOL },
-#ifdef PCRE_CONFIG_PARENS_LIMIT
-  { "parens_limit",	      PCRE_CONFIG_PARENS_LIMIT,		  CFG_INTEGER },
-#endif
+{ { "bsr2",		      PCRE2_CONFIG_BSR,			   CFG_BSR },
+  { "compiled_widths",	      PCRE2_CONFIG_COMPILED_WIDTHS,	   CFG_INTEGER },   /* PCRE2 */
+  { "depthlimit",	      PCRE2_CONFIG_DEPTHLIMIT,		   CFG_INTEGER },   /* PCRE2 */
+  { "heaplimit",	      PCRE2_CONFIG_HEAPLIMIT,		   CFG_INTEGER },   /* PCRE2 */
+  { "jit",		      PCRE2_CONFIG_JIT,			   CFG_BOOL },
+  { "jittarget",	      PCRE2_CONFIG_JITTARGET,		   CFG_STRINGBUF },
+  { "link_size",	      PCRE2_CONFIG_LINKSIZE,		   CFG_INTEGER },
+  { "linksize",		      PCRE2_CONFIG_LINKSIZE,		   CFG_INTEGER },   /* PCRE2 */ /* was LINK_SIZE */
+  { "match_limit",	      PCRE2_CONFIG_MATCHLIMIT,		   CFG_INTEGER },
+  { "match_limit_recursion",  -1,				   CFG_INVALID },
+  { "matchlimit",	      PCRE2_CONFIG_MATCHLIMIT,		   CFG_INTEGER },   /* PCRE2 */
+  { "never_backslash_c",      PCRE2_CONFIG_NEVER_BACKSLASH_C,	   CFG_BOOL },	    /* PCRE2 */
+  { "newline2",		      PCRE2_CONFIG_NEWLINE,		   CFG_NEWLINE },
+  { "parens_limit",	      PCRE2_CONFIG_PARENSLIMIT,		   CFG_INTEGER },
+  { "parenslimit",	      PCRE2_CONFIG_PARENSLIMIT,		   CFG_INTEGER },   /* PCRE2 */ /* was PARENS_LIIMT */
+  { "posix_malloc_threshold", -1,				   CFG_INVALID },
+  { "stackrecurse",	      PCRE2_CONFIG_STACKRECURSE,	   CFG_BOOL },
+  { "unicode",		      PCRE2_CONFIG_UNICODE,		   CFG_BOOL },	    /* PCRE2 */
+  { "unicode_properties",     -1,				   CFG_TRUE },
+  { "unicode_version",	      PCRE2_CONFIG_UNICODE_VERSION,	   CFG_STRINGBUF }, /* PCRE2 */
+  { "utf8",		      PCRE2_CONFIG_UNICODE,		   CFG_BOOL },	    /* backward compatibility with PCRE1 */
+  { "version",		      PCRE2_CONFIG_VERSION,		   CFG_STRINGBUF }, /* PCRE2 */
+  /*			      PCRE2_CONFIG_RECURSIONLIMIT Obsolete synonym */
+  /*			      PCRE2_CONFIG_STACKRECURSE	  Obsolete synonym */
+
   { NULL }
 };
 
@@ -624,29 +736,65 @@ re_config(term_t opt)
 
 	if ( o->atom == name )
 	{ union
-	  { int i;
-	    char *s;
+	  { uint32_t i_unsigned;
+	    int32_t  i_signed;
+	    char     s_buf[100]; /* PCRE2_CONFIG_JITTARGET requires at least 48 */
 	  } val;
 
-	  if ( pcre_config(o->id, &val) == 0 )
+	  /* pcre2_config() returns 0 for int, # bytes for stringbuf, PCRE2_ERROR_BADOPTION (negative) for error */
+	  if ( pcre2_config(o->id, &val) >= 0 )
 	  { switch(o->type)
 	    { case CFG_BOOL:
-		return PL_unify_bool(arg, val.i);
+		return PL_unify_bool(arg, val.i_signed);
 	      case CFG_INTEGER:
-		return PL_unify_integer(arg, val.i);
-	      case CFG_STRING:
-		return val.s ? PL_unify_atom_chars(arg, val.s) : FALSE;
+		return PL_unify_integer(arg, val.i_signed);
+	      case CFG_STRINGBUF:
+		return PL_unify_atom_chars(arg, val.s_buf);
+	      case CFG_BSR:
+		switch(val.i_unsigned)
+		{ case PCRE2_BSR_UNICODE:
+		    return PL_unify_atom_chars(arg, "unicode");
+		  case PCRE2_BSR_ANYCRLF:
+		    return PL_unify_atom_chars(arg, "anycrlf");
+		  default:
+		    Sfprintf(Suser_error, "CFG_BSR: 0x%08x\n", val.i_unsigned);
+		    assert(0);
+		}
+	      case CFG_NEWLINE:
+		{ const char *c;
+		  switch(val.i_unsigned)
+		  { case PCRE2_NEWLINE_CR:      c = "cr";      break;
+		    case PCRE2_NEWLINE_LF:      c = "lf";      break;
+		    case PCRE2_NEWLINE_CRLF:    c = "crlf";    break;
+		    case PCRE2_NEWLINE_ANY:     c = "any";     break;
+		    case PCRE2_NEWLINE_ANYCRLF: c = "anycrlf"; break;
+		    case PCRE2_NEWLINE_NUL:     c = "nul";     break;
+		    default:
+		      Sfprintf(Suser_error, "CFG_NEWLINE: 0x%08x\n", val.i_unsigned);
+		      assert(0);
+		  }
+		  return PL_unify_atom_chars(arg, c);
+		}
+	      case CFG_INVALID:
+		return PL_existence_error("re_config", opt);
+	      case CFG_TRUE:
 	      default:
+		Sfprintf(Suser_error, "PCRE2_CONFIG type(1): 0x%08x", o->type);
 		assert(0);
 	    }
 	  } else
-	  { break;
+	  { switch(o->type)
+	    { case CFG_TRUE:
+		return PL_unify_bool(arg, 1);
+	      case CFG_INVALID:
+		return PL_existence_error("re_config", opt);
+	      default:
+		Sfprintf(Suser_error, "PCRE2_CONFIG type(2): 0x%08x", o->type);
+		assert(0);
+	    }
 	  }
 	}
       }
-
-      if ( name == ATOM_version )
-	return PL_unify_atom_chars(arg, pcre_version());
 
       return PL_existence_error("re_config", opt);
     }
@@ -696,11 +844,11 @@ init_capture_map(re_data *re)
   int name_entry_size;
   const char *table;
   int i;
-  if ( pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_CAPTURECOUNT,  &re->capture_size)!=0 ||
-       pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMECOUNT,     &name_count)      !=0 ||
-       pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMEENTRYSIZE, &name_entry_size) !=0 ||
-       pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMETABLE,     &table)           !=0 )
-    return PL_resource_error("pcre_fullinfo");
+  if ( pcre2_pattern_info(re->pcre2_code, PCRE2_INFO_CAPTURECOUNT,  &re->capture_size)!=0 ||
+       pcre2_pattern_info(re->pcre2_code, PCRE2_INFO_NAMECOUNT,     &name_count)      !=0 ||
+       pcre2_pattern_info(re->pcre2_code, PCRE2_INFO_NAMEENTRYSIZE, &name_entry_size) !=0 ||
+       pcre2_pattern_info(re->pcre2_code, PCRE2_INFO_NAMETABLE,     &table)	      !=0 )
+    return PL_resource_error("pcre2_pattern_info");
   if ( ! (re->capture_names = malloc((re->capture_size+1) * sizeof (cap_how))) )
     return PL_resource_error("memory");
   for(i=0; i<re->capture_size+1; i++)
@@ -716,47 +864,196 @@ init_capture_map(re_data *re)
 }
 
 
+static int /* FALSE or TRUE */
+get_pcre2_info(IOSTREAM *s, const re_data *re, uint32_t info_type, const char *descr, uint32_t *result)
+{ int rc;
+  if ( !re->pcre2_code )
+    return FALSE; /* write_re_options() has already output a message */
+  rc = pcre2_pattern_info(re->pcre2_code, info_type, result);
+  switch( rc )
+  { case 0:
+      return TRUE;
+    case PCRE2_ERROR_NULL:
+      Sfprintf(s, "<%s:ERROR_NULL>", descr);
+      return FALSE;
+    case PCRE2_ERROR_BADMAGIC:
+      Sfprintf(s, "<%s:ERROR_BADMAGIC>", descr);
+      return FALSE;
+    case PCRE2_ERROR_BADOPTION:
+      Sfprintf(s, "<%s:ERROR_BADOPTION>", descr);
+      return FALSE;
+    case PCRE2_ERROR_UNSET: /* TODO: ?? *result = 0; return TRUE */
+      Sfprintf(s, "<%s:ERROR_UNSET>", descr);
+      return FALSE;
+    default:
+      Sfprintf(s, "<%s:ERROR_[%d]>", descr, rc);
+      return FALSE;
+  }
+}
+
 static void
-write_re_options(IOSTREAM *s, const char *sep, uint32_t re_options)
-{
-  /* The following were extracted from pcre.h and sorted, with bsr and newline at
-     the end because they're multi-valued: */
+write_option_str(IOSTREAM *s, const char **sep, uint32_t *flags, uint32_t field_flag, const char *name)
+{ if ( (*flags)&field_flag )
+  { Sfprintf(s, "%s%s", *sep, name);
+    *sep = " ";
+    *flags &= ~field_flag;
+  }
+}
 
-  if ( re_options & PCRE_ANCHORED )	     { Sfprintf(s, "%s%s", sep, "ANCHORED");				 sep = " "; }
-  if ( re_options & PCRE_AUTO_CALLOUT )	     { Sfprintf(s, "%s%s", sep, "AUTO_CALLOUT");			 sep = " "; }
-  if ( re_options & PCRE_CASELESS )	     { Sfprintf(s, "%s%s", sep, "CASELESS");				 sep = " "; }
-  if ( re_options & PCRE_DOLLAR_ENDONLY )    { Sfprintf(s, "%s%s", sep, "DOLLAR_ENDONLY");			 sep = " "; }
-  if ( re_options & PCRE_DOTALL )	     { Sfprintf(s, "%s%s", sep, "DOTALL");				 sep = " "; }
-  if ( re_options & PCRE_DUPNAMES )	     { Sfprintf(s, "%s%s", sep, "DUPNAMES");				 sep = " "; }
-  if ( re_options & PCRE_EXTENDED )	     { Sfprintf(s, "%s%s", sep, "EXTENDED");				 sep = " "; }
-  if ( re_options & PCRE_EXTRA )	     { Sfprintf(s, "%s%s", sep, "EXTRA");				 sep = " "; }
-  if ( re_options & PCRE_FIRSTLINE )	     { Sfprintf(s, "%s%s", sep, "FIRSTLINE");				 sep = " "; }
-  if ( re_options & PCRE_JAVASCRIPT_COMPAT ) { Sfprintf(s, "%s%s", sep, "JAVASCRIPT_COMPAT");			 sep = " "; }
-  if ( re_options & PCRE_MULTILINE )	     { Sfprintf(s, "%s%s", sep, "MULTILINE");				 sep = " "; }
-  if ( re_options & PCRE_NEVER_UTF )	     { Sfprintf(s, "%s%s", sep, "NEVER_UTF");				 sep = " "; } /* PCRE_DFA_SHORTEST (overlay ) */
+static void
+write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
+{ uint32_t ui;
 
-  if ( re_options & PCRE_NOTBOL )	     { Sfprintf(s, "%s%s", sep, "NOTBOL");				 sep = " "; }
-  if ( re_options & PCRE_NOTEMPTY )	     { Sfprintf(s, "%s%s", sep, "NOTEMPTY");				 sep = " "; }
-  if ( re_options & PCRE_NOTEMPTY_ATSTART )  { Sfprintf(s, "%s%s", sep, "NOTEMPTY_ATSTART");			 sep = " "; }
-  if ( re_options & PCRE_NOTEOL )	     { Sfprintf(s, "%s%s", sep, "NOTEOL");				 sep = " "; }
-  if ( re_options & PCRE_NO_AUTO_CAPTURE )   { Sfprintf(s, "%s%s", sep, "NO_AUTO_CAPTURE");			 sep = " "; }
-  if ( re_options & PCRE_NO_AUTO_POSSESS )   { Sfprintf(s, "%s%s", sep, "NO_AUTO_POSSESS");			 sep = " "; } /* PCRE_DFA_RESTART (overlay ) */
-  if ( re_options & PCRE_NO_START_OPTIMIZE ) { Sfprintf(s, "%s%s", sep, "NO_START_OPTIMIZE");			 sep = " "; } /*  PCRE_NO_START_OPTIMISE (synonym ) */
-  if ( re_options & PCRE_NO_UTF8_CHECK )     { Sfprintf(s, "%s%s", sep, "NO_UTF8_CHECK");			 sep = " "; } /* PCRE_NO_UTF16_CHECK, PCRE_NO_UTF32_CHECK (synonym ) */
-  if ( re_options & PCRE_PARTIAL_HARD )	     { Sfprintf(s, "%s%s", sep, "PARTIAL_HARD");			 sep = " "; }
-  if ( re_options & PCRE_PARTIAL_SOFT )	     { Sfprintf(s, "%s%s", sep, "PARTIAL_SOFT");			 sep = " "; } /* PCRE_PARTIAL (synonym ) */
-  if ( re_options & PCRE_UCP )		     { Sfprintf(s, "%s%s", sep, "UCP");					 sep = " "; }
-  if ( re_options & PCRE_UNGREEDY )	     { Sfprintf(s, "%s%s", sep, "UNGREEDY");				 sep = " "; }
-  if ( re_options & PCRE_UTF8 )		     { Sfprintf(s, "%s%s", sep, "UTF8");				 sep = " "; } /* PCRE_UTF16, PCRE_UTF32 (synonym ) */
+  if ( !re->pcre2_code_8 )
+  { Sfprintf(s, "%s<no pcre2_code>", *sep);
+    *sep = " ";
+  }
 
-  if ( (re_options & OPTBSR_MASK)     == PCRE_BSR_ANYCRLF )	  { Sfprintf(s, "%s%s", sep, "BSR_ANYCRLF");	 sep = " "; }
-  if ( (re_options & OPTBSR_MASK)     == PCRE_BSR_UNICODE )	  { Sfprintf(s, "%s%s", sep, "BSR_UNICODE");	 sep = " "; }
+  /* The various options are in the order given in pcre2.h, to make it easy to compare them. */
 
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_CR )	  { Sfprintf(s, "%s%s", sep, "NEWLINE_CR");	 sep = " "; }
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_LF )	  { Sfprintf(s, "%s%s", sep, "NEWLINE_LF");	 sep = " "; }
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_CRLF )	  { Sfprintf(s, "%s%s", sep, "NEWLINE_CRLF");	 sep = " "; }
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_ANY )	  { Sfprintf(s, "%s%s", sep, "NEWLINE_ANY");	 sep = " "; }
-  if ( (re_options & OPTNEWLINE_MASK) == PCRE_NEWLINE_ANYCRLF )	  { Sfprintf(s, "%s%s", sep, "NEWLINE_ANYCRLF"); sep = " "; }
+  /* PCRE2_INFO_ALL_OPTIONS combines options in the pattern with arg options;
+     PCRE2_INFO_ARGOPTIONS gets just the options to pcre2_compile(). */
+  // if ( get_pcre2_info(s, re, PCRE2_INFO_ALLOPTIONS, "INFO_ALLOPTIONS", &ui) )
+  if ( get_pcre2_info(s, re, PCRE2_INFO_ARGOPTIONS, "INFO_ARGOPTIONS", &ui) )
+  { /* Sfprintf(s, "<all:0x%08x>", ui); */
+    /* Special handling for PCRE2_NO_UTF_CHECK and PCRE2_UTF, which default to true */
+    if ( !(ui&PCRE2_NO_UTF_CHECK) )
+    { Sfprintf(s, "%s%s", *sep, "compile-~NO_UTF_CHECK"); *sep = " ";
+    }
+    ui &= ~PCRE2_NO_UTF_CHECK;
+    if ( !(ui&PCRE2_UTF) )
+    { Sfprintf(s, "%s%s", *sep, "compile-~UTF"); *sep = " ";
+    }
+    ui &= ~PCRE2_UTF;
+    write_option_str(s, sep, &ui, PCRE2_ANCHORED,            "compile-ANCHORED");
+    write_option_str(s, sep, &ui, PCRE2_ENDANCHORED,         "compile-ENDANCHORED");
+    write_option_str(s, sep, &ui, PCRE2_ALLOW_EMPTY_CLASS,   "ALLOW_EMPTY_CLASS");
+    write_option_str(s, sep, &ui, PCRE2_ALT_BSUX,            "ALT_BSUX");
+    write_option_str(s, sep, &ui, PCRE2_AUTO_CALLOUT,        "AUTO_CALLOUT");
+    write_option_str(s, sep, &ui, PCRE2_CASELESS,            "CASELESS");
+    write_option_str(s, sep, &ui, PCRE2_DOLLAR_ENDONLY,      "DOLLAR_ENDONLY");
+    write_option_str(s, sep, &ui, PCRE2_DOTALL,              "DOTALL");
+    write_option_str(s, sep, &ui, PCRE2_DUPNAMES,            "DUPNAMES");
+    write_option_str(s, sep, &ui, PCRE2_EXTENDED,            "EXTENDED");
+    write_option_str(s, sep, &ui, PCRE2_FIRSTLINE,           "FIRSTLINE");
+    write_option_str(s, sep, &ui, PCRE2_MATCH_UNSET_BACKREF, "MATCH_UNSET_BACKREF");
+    write_option_str(s, sep, &ui, PCRE2_MULTILINE,           "MULTILINE");
+    write_option_str(s, sep, &ui, PCRE2_NEVER_UCP,           "NEVER_UCP");
+    write_option_str(s, sep, &ui, PCRE2_NEVER_UTF,           "NEVER_UTF");
+    write_option_str(s, sep, &ui, PCRE2_NO_AUTO_CAPTURE,     "NO_AUTO_CAPTURE");
+    write_option_str(s, sep, &ui, PCRE2_NO_AUTO_POSSESS,     "NO_AUTO_POSSESS");
+    write_option_str(s, sep, &ui, PCRE2_NO_DOTSTAR_ANCHOR,   "NO_DOTSTAR_ANCHOR");
+    write_option_str(s, sep, &ui, PCRE2_NO_START_OPTIMIZE,   "NO_START_OPTIMIZE");
+    write_option_str(s, sep, &ui, PCRE2_UCP,                 "UCP");
+    write_option_str(s, sep, &ui, PCRE2_UNGREEDY,            "UNGREEDY");
+    write_option_str(s, sep, &ui, PCRE2_NEVER_BACKSLASH_C,   "NEVER_BACKSLASH_C");
+    write_option_str(s, sep, &ui, PCRE2_ALT_CIRCUMFLEX,      "ALT_CIRCUMFLEX");
+    write_option_str(s, sep, &ui, PCRE2_ALT_VERBNAMES,       "ALT_VERBNAMES");
+    write_option_str(s, sep, &ui, PCRE2_USE_OFFSET_LIMIT,    "USE_OFFSET_LIMIT");
+    write_option_str(s, sep, &ui, PCRE2_EXTENDED_MORE,       "EXTENDED_MORE");
+    write_option_str(s, sep, &ui, PCRE2_LITERAL,             "LITERAL");
+    write_option_str(s, sep, &ui, PCRE2_MATCH_INVALID_UTF,   "MATCH_INVALID_UTF");
+    if ( ui )
+    { Sfprintf(s, "%s<all:remainder:0x%08x>", *sep, ui);
+      *sep = " ";
+    }
+   }
+
+  if ( get_pcre2_info(s, re, PCRE2_INFO_EXTRAOPTIONS, "INFO_EXTRAOPTIONS", &ui) )
+  { /* Sfprintf(s, "<extra:0x%08x>", ui); */
+    write_option_str(s, sep, &ui, PCRE2_EXTRA_ALLOW_SURROGATE_ESCAPES, "EXTRA_ALLOW_SURROGATE_ESCAPES");
+    write_option_str(s, sep, &ui, PCRE2_EXTRA_BAD_ESCAPE_IS_LITERAL,   "EXTRA_BAD_ESCAPE_IS_LITERAL");
+    write_option_str(s, sep, &ui, PCRE2_EXTRA_MATCH_WORD,              "EXTRA_MATCH_WORD");
+    write_option_str(s, sep, &ui, PCRE2_EXTRA_MATCH_LINE,              "EXTRA_MATCH_LINE");
+    write_option_str(s, sep, &ui, PCRE2_EXTRA_ESCAPED_CR_IS_LF,        "EXTRA_ESCAPED_CR_IS_LF");
+    write_option_str(s, sep, &ui, PCRE2_EXTRA_ALT_BSUX,                "EXTRA_ALT_BSUX");
+    if ( ui )
+    { Sfprintf(s, "%s<all:remainder:0x%08x>", *sep, ui);
+      *sep = " ";
+    }
+  }
+
+  /* TODO:  pcre2_jit_compile() options (RE_COMPJIT_BOOL options):
+     PCRE2_JIT_COMPLETE
+     PCRE2_JIT_PARTIAL_SOFT
+     PCRE2_JIT_PARTIAL_HARD
+     PCRE2_JIT_INVALID_UTF
+  */
+
+  if ( get_pcre2_info(s, re, PCRE2_INFO_BSR, "INFO_BSR", &ui) )
+  { const char *c;
+    /* Sfprintf(s, "<bsr:0x%08x>", ui); */
+    switch( ui )
+    { case PCRE2_BSR_ANYCRLF: c = "BSR_ANYCRLF"; break;
+      case PCRE2_BSR_UNICODE: c = "BSR_UNICODE"; break;
+      default:
+	Sfprintf(Suser_error, "GET_PCRE2_INFO_BSR: 0x%08x\n", ui);
+	assert(0);
+      }
+    Sfprintf(s, "%s%s", *sep, c);
+    *sep = " ";
+  }
+
+  if (get_pcre2_info(s, re, PCRE2_INFO_NEWLINE, "INFO_NEWLINE", &ui) )
+  { uint32_t config_ui = 0;
+    int rc_c = pcre2_config(PCRE2_CONFIG_NEWLINE, &config_ui);
+    /* Sfprintf(s, "<newline:0x%08x/config:0x%08x>", ui, config_ui); */
+    /* TODO: verify that the following works on Unix, MacOs, Windows: */
+    if ( rc_c >= 0 &&
+	 ( ((config_ui == PCRE2_NEWLINE_CRLF) && (ui == PCRE2_NEWLINE_CRLF)) ||
+	   ((config_ui == PCRE2_NEWLINE_CR)   && (ui == PCRE2_NEWLINE_CR))   ||
+	   ((config_ui == PCRE2_NEWLINE_LF)   && (ui == PCRE2_NEWLINE_LF)) ) )
+    { /* do nothing */
+    } else
+    { const char *c;
+      /* Sfprintf(s, "<newline:0x%08x:::0x%08x>", ui, config_ui); */
+      switch( ui )
+      { case PCRE2_NEWLINE_CR:      c = "NEWLINE_CR";      break;
+	case PCRE2_NEWLINE_LF:      c = "NEWLINE_LF";      break;
+	case PCRE2_NEWLINE_CRLF:    c = "NEWLINE_CRLF";    break;
+	case PCRE2_NEWLINE_ANY:     c = "NEWLINE_ANY";     break;
+	case PCRE2_NEWLINE_ANYCRLF: c = "NEWLINE_ANYCRLF"; break;
+	case PCRE2_NEWLINE_NUL:     c = "NEWLINE_NUL";     break;
+	default:
+	  Sfprintf(Suser_error, "GET_PCRE2_INFO_NEWLINE: 0x%08x\n", ui);
+	  assert(0);
+      }
+      Sfprintf(s, "%s%s", *sep, c);
+    }
+  }
+
+  { ui = re->match_options_flags.flags;
+    /* Sfprintf(s, "<match:0x%08x>", ui); */
+    /* Note that some of these are for pcre2_dfa_match() or
+       pcre2_substitute(), but they're all in the same flag */
+    /* Special handling for PCRE2_NO_UTF_CHECK, which defaults to true */
+    if ( !(ui&PCRE2_NO_UTF_CHECK) )
+    { Sfprintf(s, "%s%s", *sep, "match-~NO_UTF_CHECK");
+      *sep = " ";
+    }
+    ui &= ~PCRE2_NO_UTF_CHECK;
+    write_option_str(s, sep, &ui, PCRE2_ANCHORED,                   "match-ANCHORED");
+    write_option_str(s, sep, &ui, PCRE2_ENDANCHORED,                "match-ENDANCHORED");
+    write_option_str(s, sep, &ui, PCRE2_NOTBOL,                     "NOTBOL");
+    write_option_str(s, sep, &ui, PCRE2_NOTEOL,                     "NOTEOL");
+    write_option_str(s, sep, &ui, PCRE2_NOTEMPTY,                   "NOTEMPTY");
+    write_option_str(s, sep, &ui, PCRE2_NOTEMPTY_ATSTART,           "NOTEMPTY_ATSTART");
+    write_option_str(s, sep, &ui, PCRE2_PARTIAL_SOFT,               "PARTIAL_SOFT");
+    write_option_str(s, sep, &ui, PCRE2_PARTIAL_HARD,               "PARTIAL_HARD");
+    write_option_str(s, sep, &ui, PCRE2_DFA_RESTART,                "DFA_RESTART");
+    write_option_str(s, sep, &ui, PCRE2_DFA_SHORTEST,               "DFA_SHORTEST");
+    write_option_str(s, sep, &ui, PCRE2_SUBSTITUTE_GLOBAL,          "SUBSTITUTE_GLOBAL");
+    write_option_str(s, sep, &ui, PCRE2_SUBSTITUTE_EXTENDED,        "SUBSTITUTE_EXTENDED");
+    write_option_str(s, sep, &ui, PCRE2_SUBSTITUTE_UNSET_EMPTY,     "SUBSTITUTE_UNSET_EMPTY");
+    write_option_str(s, sep, &ui, PCRE2_SUBSTITUTE_UNKNOWN_UNSET,   "SUBSTITUTE_UNKNOWN_UNSET");
+    write_option_str(s, sep, &ui, PCRE2_SUBSTITUTE_OVERFLOW_LENGTH, "SUBSTITUTE_OVERFLOW_LENGTH");
+    write_option_str(s, sep, &ui, PCRE2_NO_JIT,                     "NO_JIT");
+    write_option_str(s, sep, &ui, PCRE2_COPY_MATCHED_SUBJECT,       "COPY_MATCHED_SUBJECT");
+    if ( ui )
+    { Sfprintf(s, "%s<all:remainder:0x%08x>", ui);
+      *sep = " ";
+    }
+  }
 }
 
 
@@ -769,26 +1066,28 @@ static foreign_t
 re_portray(term_t stream, term_t regex)
 { IOSTREAM *fd;
   re_data re;
+  const char *sep = "";
   if ( !PL_get_stream(stream, &fd, SIO_OUTPUT) || !PL_acquire_stream(fd) )
     return FALSE;
   if ( !get_re_copy(regex, &re) )
     return FALSE;
   Sfprintf(fd, "<regex>(/%s/ [", PL_atom_chars(re.pattern));
-  write_re_options(fd, "", re.compile_options_flags.flags);
-  Sfprintf(fd, " %s] $capture=%d", cap_type_str(re.capture_type.flags), re.capture_size);
-  if ( re.optimise_flags.flags&RE_STUDY )
-    Sfprintf(fd, " $study");
+  write_re_options(fd, &sep, &re);
+  Sfprintf(fd, "%s%s] $capture=%d", sep, cap_type_str(re.capture_type.flags), re.capture_size);
+  sep = " ";
+  if ( re.optimise_flags.flags&RE_OPTIMISE )
+    Sfprintf(fd, "%s$optimise", sep);
   if ( re.capture_size && re.capture_names )
   { int i;
-    const char *sep = "";
-    Sfprintf(fd, " {", re.capture_size);
+    const char* sep2 = "";
+    Sfprintf(fd, "%s{", sep, re.capture_size);
     for(i=0; i<re.capture_size+1; i++)
     { if ( re.capture_names[i].name )
-      { Sfprintf(fd, "%s%d:%s:%s", sep, i, PL_atom_chars(re.capture_names[i].name), cap_type_str(re.capture_names[i].type));
-	sep = " ";
+      { Sfprintf(fd, "%s%d:%s:%s", sep2, i, PL_atom_chars(re.capture_names[i].name), cap_type_str(re.capture_names[i].type));
+	sep2 = " ";
       } else
-      { Sfprintf(fd, "%s%d:%s", sep, i, cap_type_str(re.capture_names[i].type));
-	sep = " ";
+      { Sfprintf(fd, "%s%d:%s", sep2, i, cap_type_str(re.capture_names[i].type));
+	sep2 = " ";
       }
     }
     Sfprintf(fd, "}");
@@ -807,46 +1106,85 @@ re_portray(term_t stream, term_t regex)
 */
 static foreign_t
 re_compile(term_t pat, term_t reb, term_t options)
-{ size_t len;
+{ int rc; /* Every path (to label out) must set rc */
+  size_t len;
   char *pats;
+  pcre2_compile_context *compile_ctx = NULL;
   int re_error_code;
-  const char *re_error_msg;
-  int re_error_offset;
-  const unsigned char *tableptr = NULL;
+  PCRE2_SIZE re_error_offset;
   re_data re;
   init_re_data(&re);
 
-  if ( !re_get_options(options, &re) )
-    return FALSE;
-  re.compile_options_flags.flags |= PCRE_UTF8|PCRE_NO_UTF8_CHECK;
-
+  if ( !re_get_options(options, &re, &compile_ctx) )
+  { rc = FALSE;
+    goto out;
+  }
   if ( !PL_get_nchars(pat, &len, &pats, GET_NCHARS_FLAGS) )
-    return FALSE;
+  { rc = FALSE;
+    goto out;
+  }
   if ( strlen(pats) != len )		/* TBD: escape as \0xx */
-    return PL_representation_error("nul_byte");
+  { rc = PL_representation_error("nul_byte");
+    goto out;
+  }
 
-  if ( (re.pcre = pcre_compile2(pats, re.compile_options_flags.flags,
-				&re_error_code, &re_error_msg, &re_error_offset,
-				tableptr) ) )
-  { if ( re.optimise_flags.flags&RE_STUDY )
-    { re.extra = pcre_study(re.pcre, 0, &re_error_msg);
-					/* TBD: handle error */
+  if ( re.compile_bsr_flags.flags )
+  { ensure_compile_context(&compile_ctx);
+    if ( 0 != pcre2_set_bsr(compile_ctx, re.compile_bsr_flags.flags) )
+    { rc = PL_representation_error("option:bsr"); /* Should never happen */
+      goto out;
+    }
+  }
+  if ( re.compile_newline_flags.flags )
+  { ensure_compile_context(&compile_ctx);
+    if ( 0 != pcre2_set_newline(compile_ctx, re.compile_newline_flags.flags) )
+    { rc = PL_representation_error("option:newline"); /* Should never happen */
+      goto out;
+    }
+  }
+  if ( re.compile_ctx_flags.flags )
+  { ensure_compile_context(&compile_ctx);
+    if ( 0 != pcre2_set_compile_extra_options(compile_ctx, re.compile_ctx_flags.flags) )
+    { rc = PL_representation_error("option:extra"); /* Should never happen */
+      goto out;
+    }
+  }
+
+  /* pats is ptr to (signed) char; PCRE2_SPTR is ptr to uint8; they're
+     compatible as far as we're concerned */
+  if ( (re.pcre2_code = pcre2_compile((PCRE2_SPTR)pats, len, re.compile_options_flags.flags,
+				      &re_error_code, &re_error_offset, compile_ctx) ) )
+  { if ( re.optimise_flags.flags&RE_OPTIMISE )
+    { pcre2_jit_compile(re.pcre2_code, re.jit_options_flags.flags);
+      /* TBD: handle error that's not from no jit support, etc. */
+      /* TODO: unit test to verify jit compile worked and
+               that options were handled properly - needs changes
+               to write_re_options() */
     }
     if ( !init_capture_map(&re) )
     { /* init_capture_map() has called an appropriate PL_..._error()
 	 to indicate the cause; PL_..._error() returns FALSE, so
 	 return that value. */
-      return FALSE;
+      rc = FALSE;
+      goto out;
     }
 
     if ( (PL_get_atom(pat, &re.pattern)) )
       PL_register_atom(re.pattern);
     else
       re.pattern = PL_new_atom_mbchars(REP_UTF8, len, pats);
-    return PL_unify_blob(reb, &re, sizeof re, &pcre_blob);
+    rc = PL_unify_blob(reb, &re, sizeof re, &pcre2_blob);
+    goto out;
   } else
-  { return PL_syntax_error(re_error_msg, NULL); /* TBD: location, code */
+  { PCRE2_UCHAR re_error_msg[256];
+    pcre2_get_error_message(re_error_code, re_error_msg, sizeof re_error_msg - 1);
+    rc = PL_syntax_error((const char *)re_error_msg, NULL); /* TBD: location, code */
+    goto out;
   }
+
+ out:
+  pcre2_compile_context_free(compile_ctx);
+  return rc;
 }
 
 
@@ -859,16 +1197,26 @@ static foreign_t
 re_portray_match_options_(term_t stream, term_t options)
 { IOSTREAM *fd;
   re_data re;
+  pcre2_compile_context *compile_ctx = NULL;
+  const char *sep = "";
+  int rc;
   init_re_data(&re);
   if ( !PL_get_stream(stream, &fd, SIO_OUTPUT) || !PL_acquire_stream(fd) )
     return FALSE;
 
-  if ( !re_get_options(options, &re) )
-    return FALSE;
+  if ( !re_get_options(options, &re, &compile_ctx) )
+  { rc = FALSE;
+    goto out;
+  }
 
-  write_re_options(fd, "", re.exec_options_flags.flags);
-  Sfprintf(fd, " $start=%lu", re.start_flags.flags);
-  return PL_release_stream(fd);
+  write_re_options(fd, &sep, &re);
+  Sfprintf(fd, "%s$start=%lu", sep, (long unsigned)re.start_flags.flags);
+  sep = " ";
+  rc = PL_release_stream(fd);
+
+ out:
+  pcre2_compile_context_free(compile_ctx);
+  return rc;
 }
 
 
@@ -883,7 +1231,7 @@ out_of_range(size_t index)
 
 
 static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
-put_capname(term_t t, re_data *re, int i)
+put_capname(term_t t, const re_data *re, int i)
 { atom_t name;
 
   if ( re->capture_names && (name=re->capture_names[i].name) )
@@ -894,7 +1242,7 @@ put_capname(term_t t, re_data *re, int i)
 
 
 static int  /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
-put_capval(term_t t, re_data *re, re_subject *subject, int i, const int ovector[])
+put_capval(term_t t, const re_data *re, re_subject *subject, int i, const PCRE2_SIZE ovector[])
 { const char *s = &subject->subject[ovector[i*2]];
   int len = ovector[i*2+1]-ovector[i*2];
   cap_type ctype = re->capture_type.flags;
@@ -925,20 +1273,32 @@ put_capval(term_t t, re_data *re, re_subject *subject, int i, const int ovector[
       return rc;
     }
     default:
+      Sfprintf(Suser_error, "PUT_CAPVAL ctype: 0x%08x\n", ctype);
       assert(0);
       return FALSE;
   }
 }
 
 static int /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
-unify_match(term_t t, re_data *re, re_subject *subject,
-	    int ovsize, const int *ovector)
-{ int i, rc;
+unify_match(term_t t, const re_data *re, re_subject *subject,
+	    int ovsize, const PCRE2_SIZE *ovector)
+{ int i;
   term_t av   = PL_new_term_refs(4);
   term_t capn = av+0;
   term_t caps = av+1;
   term_t pair = av+2;
   term_t list = av+3;
+  /* Must guard against patterns such as /(?=.\K)/ that use \K in an
+     assertion to set the start of a match later than its end. */
+  /* TODO: don't just detect this case and give up. */
+
+  if (ovector[0] > ovector[1])
+  {
+    /* TODO:  "From end to start the match was: %.*s\n", (int)(ovector[0] - ovector[1]),
+							 (char *)(subject + ovector[1]))
+    */
+    return PL_representation_error("\\K used assertion to set the match start after its end");
+  }
 
   PL_put_nil(list);
   for(i=ovsize-1; i>=0; i--)
@@ -954,99 +1314,40 @@ unify_match(term_t t, re_data *re, re_subject *subject,
       return FALSE;
   }
 
-  rc = PL_unify(t, list);
-  PL_reset_term_refs(av);
-  return rc;
+  { int rc = PL_unify(t, list);
+    PL_reset_term_refs(av);
+    return rc;
+  }
 }
 
 
 static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
-re_error(int ec) /* ec is error code from pcre_exec */
+re_error(int ec) /* ec is error code from pcre2_match() etc */
 { switch(ec)
   { case 0:				/* Too short ovector */
-      assert(0);
-    case PCRE_ERROR_NOMATCH:
+      Sfprintf(Suser_error, "RE_ERROR: 0\n");
+      assert(0); /* Should not happen because we used pcre2_match_data_create_from_pattern() */
+    case PCRE2_ERROR_NOMATCH:
       return FALSE;
-    case PCRE_ERROR_NULL:
-    case PCRE_ERROR_BADOPTION:
-    case PCRE_ERROR_BADMAGIC:
-    case PCRE_ERROR_UNKNOWN_OPCODE:
+    case PCRE2_ERROR_NULL:
+    case PCRE2_ERROR_BADOPTION:
+    case PCRE2_ERROR_BADMAGIC:
       return PL_representation_error("regex");
-    case PCRE_ERROR_NOMEMORY:
+    case PCRE2_ERROR_NOMEMORY:
       return PL_resource_error("memory");
-    case PCRE_ERROR_MATCHLIMIT:
+    case PCRE2_ERROR_MATCHLIMIT:
       return PL_resource_error("match_limit");
-    case PCRE_ERROR_BADOFFSET: /* Should be caught by utf8_seek() */
+    case PCRE2_ERROR_BADOFFSET: /* Should be caught by utf8_seek() */
       return PL_representation_error("regex-offset");
-    /* The following are all the other error codes that are
-       documented for pcre_exec(). They have been listed, to
-       aid in migration to PCRE2. */
-    case PCRE_ERROR_NOSUBSTRING:
-    case PCRE_ERROR_CALLOUT:
-    case PCRE_ERROR_BADUTF8:
-    case PCRE_ERROR_BADUTF8_OFFSET:
-    case PCRE_ERROR_PARTIAL:
-    case PCRE_ERROR_BADPARTIAL:
-    case PCRE_ERROR_INTERNAL:
-    case PCRE_ERROR_BADCOUNT:
-    case PCRE_ERROR_RECURSIONLIMIT:
-    case PCRE_ERROR_BADNEWLINE:
-    case PCRE_ERROR_SHORTUTF8:
-    case PCRE_ERROR_RECURSELOOP:
-    case PCRE_ERROR_JIT_STACKLIMIT:
-    case PCRE_ERROR_BADMODE:
-    case PCRE_ERROR_BADENDIANNESS:
-    case PCRE_ERROR_JIT_BADOPTION:
-    case PCRE_ERROR_BADLENGTH:
-    case PCRE_UTF8_ERR1:
-    case PCRE_UTF8_ERR2:
-    case PCRE_UTF8_ERR3:
-    case PCRE_UTF8_ERR4:
-    case PCRE_UTF8_ERR5:
-    case PCRE_UTF8_ERR6:
-    case PCRE_UTF8_ERR7:
-    case PCRE_UTF8_ERR8:
-    case PCRE_UTF8_ERR9:
-    case PCRE_UTF8_ERR10:
-    case PCRE_UTF8_ERR11:
-    case PCRE_UTF8_ERR12:
-    case PCRE_UTF8_ERR13:
-    case PCRE_UTF8_ERR14:
-    case PCRE_UTF8_ERR15:
-    case PCRE_UTF8_ERR16:
-    case PCRE_UTF8_ERR17:
-    case PCRE_UTF8_ERR18:
-    case PCRE_UTF8_ERR19:
-    case PCRE_UTF8_ERR20:
-    case PCRE_UTF8_ERR21:
-    case PCRE_UTF8_ERR22:
+    case PCRE2_ERROR_PARTIAL: /* TODO: do we need to handle this? See PCRE2_PARTIAL_HARD, PCRE2_PARTIAL_SOFT options */
+    /* TODO: add all the other pcre2_compile(), pcre2_match(), etc. codes here
+	     and verify that they shouldn't happen. */
     default:
-      Sfprintf(Suser_error, "RE_ERROR: %d\n", ec); /* TODO: remove */
+      Sfprintf(Suser_error, "RE_ERROR: 0x%08x\n", ec);
       assert(0);			/* TBD */
   }
 
   return FALSE;
-}
-
-
-static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
-alloc_ovector(const re_data *re, int *ovecbuf, int *ovecsize, int **ovector)
-{ int sz = (re->capture_size+1)*3;
-
-  /* In the following, malloc() is correct, - don't use realloc().
-     This is because the caller allocates ovecbuf on the stack; for
-     cleanup, the caller checks whether *ovector is still on the stack
-     or (if it wasn't big enough and was malloc-ed) it does a free(). */
-  if ( sz > *ovecsize )
-  { if ( !(*ovector = malloc(sz*sizeof (int))) )
-    { return PL_resource_error("memory");
-    }
-    *ovecsize = sz;
-  } else
-  { *ovector = ovecbuf;
-  }
-
-  return TRUE;
 }
 
 
@@ -1058,59 +1359,47 @@ static foreign_t
 re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
 { re_data re;
   re_subject subject;
+  int rc; /* Every path (to label out) must set rc */
+  pcre2_match_data *match_data;
+  size_t utf8_start;
   init_subject(&subject);
 
   if ( !get_re_copy(regex, &re) )
     return FALSE;
   if ( !re_get_subject(on, &subject, 0) )
     return FALSE;
-  if ( !re_get_options(options, &re) )
+  if ( !re_get_options(options, &re, NULL) )
     return FALSE;
 
-  { int rc; /* Every path (to label out) must set rc */
-    int ovecbuf[30];
-    int ovecsize = 30;
-    int *ovector;
-    if ( !alloc_ovector(&re, ovecbuf, &ovecsize, &ovector) )
-    { rc = FALSE;
-      goto out;
+  /* From here on, all errors must do "rc = xxx; go to out" */
+  /* TODO: conditionally allocate match_data on the stack? (As in the PCRE1 code) */
+  match_data = pcre2_match_data_create_from_pattern(re.pcre2_code, NULL);
+  /* utf8_seek() returns size_t; pcre2_match() takes int */
+  /* re_get_options() ensured that the value isn't greater than INT_MAX */
+  utf8_start = utf8_seek(subject.subject, subject.length, re.start_flags.flags);
+  if ( utf8_start == (size_t)-1 )
+  { rc = out_of_range(re.start_flags.flags);
+    goto out;
+  }
+  { int re_rc = pcre2_match(re.pcre2_code,
+			    (PCRE2_SPTR)subject.subject, subject.length,
+			    utf8_start, re.match_options_flags.flags,
+			    match_data, NULL);  // TODO: NULL=>pcre2_match_context
+
+    if ( re_rc > 0 )			/* match */
+    { if ( result )
+	rc = unify_match(result, &re, &subject, re_rc,
+			 pcre2_get_ovector_pointer(match_data));
+      else
+	rc = TRUE;
+    } else
+    { rc = re_error(re_rc);
     }
-
-    { /* utf8_seek() returns size_t; pcre_exec() takes int */
-      /* re_get_options() ensured that the value isn't greater than INT_MAX */
-      size_t utf8_start;
-
-      if ( (utf8_start=utf8_seek(subject.subject, subject.length,
-				 re.start_flags.flags)) == (size_t)-1 )
-      { rc = out_of_range(re.start_flags.flags);
-	goto out;
-      }
-      { int re_rc = pcre_exec(re.pcre, re.extra,
-			      subject.subject, subject.length,
-			      utf8_start, re.exec_options_flags.flags,
-			      ovector, ovecsize);
-
-	if ( re_rc > 0 )			/* match */
-	{ if ( result )
-	    rc = unify_match(result, &re, &subject, re_rc, ovector);
-	  else
-	    rc = TRUE;
-	} else
-	{ rc = re_error(re_rc);
-	}
-      }
-    }
-
-  out:
-    if ( ovector && ovector != ovecbuf )
-      free(ovector);
-
-    re_free_subject(&subject);
-
-    return rc;
   }
 
-  return FALSE;
+out:
+  pcre2_match_data_free(match_data);
+  return rc;
 }
 
 
@@ -1133,96 +1422,77 @@ static foreign_t
 re_foldl_(term_t regex, term_t on,
 	  term_t closure, term_t v0, term_t v,
 	  term_t options)
-{ re_data re;
+{ /* TODO: combine code with re_matchsub_() */
+  re_data re;
   re_subject subject;
+  int rc; /* Every path (to label out) must set rc */
+  pcre2_match_data *match_data;
+  size_t utf8_start;
+  predicate_t pred = PL_predicate("re_call_folder", 4, "pcre");
+  term_t av = PL_new_term_refs(4);
   init_subject(&subject);
+
+  if ( !PL_put_term(av+0, closure) )
+    return FALSE;
+		 /* av+1 is match */
+  if ( !PL_put_term(av+2, v0) )
+    return FALSE;
+		 /* av+3 = v1 */
 
   if ( !get_re_copy(regex, &re) )
     return FALSE;
-  if ( !re_get_subject(on, &subject, BUF_STACK) )
+  if ( !re_get_subject(on, &subject, BUF_STACK) ) /* Different from re_matchsub_() */
     return FALSE;
-  if ( !re_get_options(options, &re) )
+  if ( !re_get_options(options, &re, NULL) )
     return FALSE;
 
-  { int rc; /* Every path (to label out) must set rc */
-    int ovecbuf[30];
-    int ovecsize = 30;
-    int *ovector;
-    int offset = 0;
-    static predicate_t pred = 0;
-    term_t av = PL_new_term_refs(4);
-
-    if ( !alloc_ovector(&re, ovecbuf, &ovecsize, &ovector) )
-    { rc = FALSE;
-      goto out;
-    }
-
-    if ( !pred )
-      pred = PL_predicate("re_call_folder", 4, "pcre");
-
-    if ( !PL_put_term(av+0, closure) )
-    { rc = FALSE;
-      goto out;
-    }
-	     /* av+1 is match */
-    if ( !PL_put_term(av+2, v0) )
-    { rc = FALSE;
-      goto out;
-    }
-	     /* av+3 = v1 */
-
-    for(;;)
-    { int re_rc = pcre_exec(re.pcre, re.extra,
-			    subject.subject, subject.length,
-			    offset, re.exec_options_flags.flags,
-			    ovector, ovecsize);
-
-      if ( re_rc > 0 )
-      { PL_put_variable(av+1);
-	if ( !unify_match(av+1, &re, &subject, re_rc, ovector) ||
-	     !PL_call_predicate(NULL, PL_Q_PASS_EXCEPTION, pred, av) ||
-	     !PL_put_term(av+2, av+3) ||
-	     !PL_put_variable(av+3) )
-	{ rc = FALSE;
-	  goto out;
-	}
-	if ( ovector[1] == offset )
-	  offset++;
-	else
-	  offset = ovector[1];
-      } else if ( re_rc == PCRE_ERROR_NOMATCH )
-      { rc = PL_unify(av+2, v);
-	break;
-      } else
-      { rc = re_error(re_rc);
-	break;
-      }
-    }
-
-  out:
-    if ( ovector != ovecbuf )
-      free(ovector);
-    re_free_subject(&subject);
-
-    return rc;
+  /* From here on, all errors must do "rc = xxx; go to out" */
+  match_data = pcre2_match_data_create_from_pattern(re.pcre2_code, NULL);
+  /* utf8_seek() returns size_t; pcre2_match() takes int */
+  /* re_get_options() ensured that the value isn't greater than INT_MAX */
+  utf8_start = utf8_seek(subject.subject, subject.length, re.start_flags.flags);
+  if ( utf8_start == (size_t)-1 )
+  { rc = out_of_range(re.start_flags.flags);
+    goto out;
   }
 
-  return FALSE;
+  for(;;)
+  { int re_rc = pcre2_match(re.pcre2_code,
+			    (PCRE2_SPTR)subject.subject, subject.length,
+			    utf8_start, re.match_options_flags.flags,
+			    match_data, NULL);  // TODO: NULL=>pcre2_match_context
+    if ( re_rc > 0 )
+    { const PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(match_data);
+      PL_put_variable(av+1);
+      if ( !unify_match(av+1, &re, &subject, re_rc, ovector) ||
+	   !PL_call_predicate(NULL, PL_Q_PASS_EXCEPTION, pred, av) ||
+	   !PL_put_term(av+2, av+3) ||
+	   !PL_put_variable(av+3) )
+      { rc = FALSE;
+	goto out;
+      }
+      if ( ovector[1] == utf8_start )
+	utf8_start++;
+      else
+	utf8_start = ovector[1];
+    } else if ( re_rc == PCRE2_ERROR_NOMATCH ) /* TODO: also PCRE2_ERROR_PARTIAL? */
+    { rc = PL_unify(av+2, v);
+      break;
+    } else
+    { rc = re_error(re_rc);
+      break;
+    }
+  }
+
+ out:
+  pcre2_match_data_free(match_data);
+  return rc;
 }
-
-
-
-#define MKFUNCTOR(n,a) \
-	FUNCTOR_ ## n ## a = PL_new_functor(PL_new_atom(#n), a)
-#define MKATOM(n) \
-	ATOM_ ## n = PL_new_atom(#n)
 
 
 install_t
 install_pcre4pl(void)
 { FUNCTOR_pair2 = PL_new_functor(PL_new_atom("-"), 2);
-
-  MKATOM(version);
 
   PL_register_foreign("re_config",    1, re_config,    0);
   PL_register_foreign("re_compile",   3, re_compile,   0);

@@ -132,7 +132,7 @@ re_test(anchored7, Sub == re_match{0:"aaa"}) :-
     re_compile("a+", Re, []),
     re_matchsub(Re, "xaaabc", Sub, [anchored(false)]).
 
-re_test(compile_option1) :-
+re_test(compile_option1, error(type_error(option,compat(javascript)),_)) :-
     re_compile("a+b", _Re, [compat(javascript)]).
 re_test(compile_option2, error(type_error(option,compat(qqsv)),_)) :-
     re_compile("a+b", _Re, [compat(qqsv)]).
@@ -150,16 +150,26 @@ re_test(fold3, Count == 2) :- % re_match_count/3 example from documentation
     String = "aap",
     re_foldl(increment, Regex, String, 0, Count, []).
 
-re_test(named, [Sub, RegexStr] ==
-	       [re_match{0:"2017-04-20",
-			 date:"2017-04-20",
-			 day:"20",month:"04",year:"2017"},
-		"<regex>(/(?<date> (?<year>(?:\\d\\d)?\\d\\d) -\n\t\t(?<month>\\d\\d) - (?<day>\\d\\d) )/ [EXTENDED NO_UTF8_CHECK UTF8 CAP_STRING] $capture=4 {0:CAP_DEFAULT 1:date:CAP_DEFAULT 2:year:CAP_DEFAULT 3:month:CAP_DEFAULT 4:day:CAP_DEFAULT})"]) :-
+re_test(fold4a, Letters == ["a", "b", "c"]) :-
+    re_foldl(add_match, ".", "abc", Letters, [], []).
+
+re_test(fold4b, Letters == ['網','目','錦','へ','び',' ','[','à','m','í','m','é',' ','n','í','s','h','í','k','í','h','é','ꜜ','b','ì',']']) :-
+    re_foldl(add_match, ".", "網目錦へび [àmímé níshíkíhéꜜbì]", Letters, [], [capture_type(atom)]).
+
+% TODO: change following to atoms once Issue #14 is fixed.
+re_test(fold4c, Letters == ["網","目","錦","へ","び"," ","[","à","m","í","m","é"," ","n","í","s","h","í","k","í","h","é","ꜜ","b","ì","]"]) :-
+    re_split(".", "網目錦へび [àmímé níshíkíhéꜜbì]", Split, []),
+    post_split_dot(Split, Letters).
+
+re_test(named, Sub == re_match{0:"2017-04-20",
+                               date:"2017-04-20",
+                               day:"20",month:"04",year:"2017"}) :-
     re_compile("(?<date> (?<year>(?:\\d\\d)?\\d\\d) -
 		(?<month>\\d\\d) - (?<day>\\d\\d) )", Re,
 	       [extended(true)]),
     re_matchsub(Re, "2017-04-20", Sub, []),
-    re_portray_string(Re, RegexStr).
+    re_portray_string(Re, RegexStr),
+    assertion(RegexStr == "<regex>(/(?<date> (?<year>(?:\\d\\d)?\\d\\d) -\n\t\t(?<month>\\d\\d) - (?<day>\\d\\d) )/ [EXTENDED BSR_UNICODE CAP_STRING] $capture=4 {0:CAP_DEFAULT 1:date:CAP_DEFAULT 2:year:CAP_DEFAULT 3:month:CAP_DEFAULT 4:day:CAP_DEFAULT})").
 re_test(typed1, Sub == re_match{0:"2017-04-20",
 				date:"2017-04-20",
 				day:20,month:4,year:2017}) :-
@@ -227,6 +237,10 @@ re_test(split_2, Split == ['','a','b','aa','c']) :-
     re_split("a+"/a, "abaac", Split).
 re_test(split_3, Split == ['','a','b','aa','c']) :-
     re_split("a+", "abaac", Split, [capture_type(atom)]).
+re_test(split_4a, Letters = ["", "a", "", "b", "", "c", ""]) :-
+    re_split(".", "abc", Letters, []).
+re_test(split_4b, Letters = ['', 'a', '', 'b', '', 'c', '']) :-
+    re_split('.', 'abc', Letters, [capture_type(atom)]).
 
 re_test(replace1, NewString == "Abaac") :-
     re_replace("a+", "A", "abaac", NewString).
@@ -244,7 +258,7 @@ re_test(replace_all2a, NewString == 'XbXc') :-
     re_replace("a+"/gia, "X", "AbaAc", NewString).
 re_test(replace_all2b, NewString == 'XbXc') :-
     re_replace("a+"/ga, "X", "AbaAc", NewString, [caseless(true)]).
-re_test(replace_all2c, [NewString == 'XbXc']) :-
+re_test(replace_all2c, NewString == 'XbXc') :-
     re_replace("a+"/g, "X", "AbaAc", NewString, [caseless(true), capture_type(atom)]).
 re_test(replace_all3, NewString == "A[1]bA[2]A[3]c") :-
     re_replace("a(\\d)"/g, "A[\\1]", "a1ba2a3c", NewString).
@@ -309,7 +323,7 @@ re_test(config_invalid, error(existence_error(re_config,qqsv(V)),_)) :-
     re_config(qqsv(V)).
 re_test(config_version) :-
     re_config(version(V)),
-    must_be(atom, V), % TODO: V is of the form '8.39 2016-06-14'.
+    must_be(atom, V), % TODO: V is of the form '10.34 2019-11-21'.
     re_config(version(V)). % Check that it takes an argument
 re_test(config_version_type, fail) :-
     re_config(version(V)),
@@ -341,16 +355,20 @@ re_test(config_jittarget) :-
     ->  must_be(atom, V)
     ;   true			% no JIT support
     ).
-re_test(config_newline) :-
-    re_config(newline(V)),
-    assertion(memberchk(V, [10,13,3338,-2,-1])). /* pcre api documented values */
-re_test(config_bsr) :-
-    re_config(bsr(V)),
-    must_be(integer, V).
+re_test(config_newline, error(existence_error(re_config,newline(V)),_)) :-
+    re_config(newline(V)).
+re_test(config_newline2) :-
+    re_config(newline2(V)),
+    assertion(memberchk(V, [cr,lf,crlf,any,anycrlf,nul])).
+re_test(config_bsr, error(existence_error(re_config,bsr(V)),_)) :-
+    re_config(bsr(V)).
+re_test(config_bsr2) :-
+    re_config(bsr2(V)),
+    assertion(memberchk(V, [unicode,anycrlf])).
 re_test(config_link_size) :-
     re_config(link_size(V)),
     must_be(integer, V).
-re_test(config_posix_malloc_threshold) :-
+re_test(config_posix_malloc_threshold, error(existence_error(re_config,posix_malloc_threshold(V)),_)) :-
     re_config(posix_malloc_threshold(V)),
     must_be(integer, V).
 re_test(config_parens_limit) :-
@@ -359,136 +377,253 @@ re_test(config_parens_limit) :-
 re_test(config_match_limit) :-
     re_config(match_limit(V)),
     must_be(integer, V).
-re_test(config_match_limit_recursion) :-
+re_test(config_match_limit_recursion, error(existence_error(re_config,match_limit_recursion(V)),_)) :-
     re_config(match_limit_recursion(V)),
     must_be(integer, V).
 re_test(config_stackrecurse) :-
     re_config(stackrecurse(V)),
     must_be(boolean, V).
+test(config_linksize) :-
+    re_config(linksize(V)),
+    must_be(integer, V),
+    assertion(memberchk(V, [2,3,4])).
+test(config_parenslimit) :-
+    re_config(parenslimit(V)),
+    must_be(integer, V).
+test(config_matchlimit) :-
+    re_config(matchlimit(V)),
+    must_be(integer, V).
+test(config_depthlimit) :-
+    re_config(depthlimit(V)),
+    must_be(integer, V).
+test(config_unicode) :-
+    re_config(unicode(V)),
+    must_be(boolean, V).
+test(config_unicode_version) :-
+    re_config(unicode_version(V)),
+    must_be(atom, V).
+test(config_heaplimit) :-
+    re_config(heaplimit(V)),
+    must_be(integer, V).
+test(config_heaplimit) :-
+    re_config(heaplimit(V)),
+    must_be(integer, V).
+test(config_never_backslash_c) :-
+    re_config(never_backslash_c(V)),
+    must_be(boolean, V).
+test(config_compiled_widths) :-
+    re_config(compiled_widths(V)),
+    must_be(integer, V).
 
 re_test(compile_portray_0,
-        RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 CAP_STRING] $capture=0)") :-
+        RegexStr == "<regex>(/./ [BSR_UNICODE CAP_STRING] $capture=0)") :-
     re_compile(".", Regex, []),
     re_portray_string(Regex, RegexStr).
+re_test(compile_portray_0a,
+        RegexStr == "<regex>(/./ [BSR_UNICODE NEWLINE_ANYCRLF CAP_STRING] $capture=0)") :-
+    re_compile(".", Regex, [newline(anycrlf)]),
+    re_portray_string(Regex, RegexStr).
 re_test(compile_portray_1a,
-        RegexStr == "<regex>(/(.)/ [NO_UTF8_CHECK UTF8 CAP_STRING] $capture=1 {0:CAP_DEFAULT 1:CAP_DEFAULT})") :-
+        RegexStr == "<regex>(/(.)/ [BSR_UNICODE CAP_STRING] $capture=1 {0:CAP_DEFAULT 1:CAP_DEFAULT})") :-
     re_compile("(.)", Regex, []),
     re_portray_string(Regex, RegexStr).
 re_test(compile_portray_1b,
-        RegexStr == "<regex>(/(.)/ [NO_UTF8_CHECK UTF8 CAP_ATOM] $capture=1 {0:CAP_DEFAULT 1:CAP_DEFAULT})") :-
+        RegexStr == "<regex>(/(.)/ [BSR_UNICODE CAP_ATOM] $capture=1 {0:CAP_DEFAULT 1:CAP_DEFAULT})") :-
     re_compile("(.)", Regex, [capture_type(atom)]),
     re_portray_string(Regex, RegexStr).
 re_test(compile_portray_2,
-        RegexStr == "<regex>(/(?<foo>.)([a-z]*)(?<bar_A>.)/ [NO_UTF8_CHECK UTF8 CAP_STRING] $capture=3 {0:CAP_DEFAULT 1:foo:CAP_DEFAULT 2:CAP_DEFAULT 3:bar:CAP_ATOM})") :-
+        RegexStr == "<regex>(/(?<foo>.)([a-z]*)(?<bar_A>.)/ [BSR_UNICODE CAP_STRING] $capture=3 {0:CAP_DEFAULT 1:foo:CAP_DEFAULT 2:CAP_DEFAULT 3:bar:CAP_ATOM})") :-
     re_compile("(?<foo>.)([a-z]*)(?<bar_A>.)", Regex, []),
     re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_1,
-     RegexStr == "<regex>(/./ [ANCHORED CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED EXTRA FIRSTLINE JAVASCRIPT_COMPAT MULTILINE NO_AUTO_CAPTURE NO_UTF8_CHECK UCP UNGREEDY UTF8 BSR_ANYCRLF NEWLINE_CRLF CAP_RANGE] $capture=0 $study)") :-
+        % negative: NO_AUTO_CAPTURE NO_AUTO_POSSES NO_DOTSTAR_ANCHOR NO_START_OPTIMIZE UNGREEDY
+        % defaulted: NO_UTF_CHECK UTF
+        % TODO: missing: JIT_COMPLETE JIT_PARTIAL_SOFT JIT_PARTIAL_HARD JIT_INVALID_UTF
+        RegexStr == "<regex>(/./ [compile-ANCHORED compile-ENDANCHORED ALLOW_EMPTY_CLASS ALT_BSUX AUTO_CALLOUT CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED FIRSTLINE MATCH_UNSET_BACKREF MULTILINE UCP NEVER_BACKSLASH_C ALT_CIRCUMFLEX ALT_VERBNAMES USE_OFFSET_LIMIT EXTENDED_MORE MATCH_INVALID_UTF BSR_ANYCRLF NEWLINE_ANYCRLF CAP_RANGE] $capture=0 $optimise)") :-
     re_compile('.',  Regex,
-	       [anchored(true),
-		auto_capture(false),
-		caseless(true),
-		dollar_endonly(true),
-		dotall(true),
-		dupnames(true),
-		extended(true),
-		extra(true),
-		firstline(true),
-		greedy(false),
-		compat(javascript),
-		multiline(true),
-		ucp(true),
-		optimize(true),
-		capture_type(range),
-		bsr(anycrlf),
-		newline(crlf)
+	       [ anchored(true), % Also re_match/3
+                 endanchored(true),
+                 allow_empty_class(true),
+                 alt_bsux(true),
+                 auto_callout(true),
+                 caseless(true),
+                 dollar_endonly(true),
+                 dotall(true),
+                 dupnames(true),
+                 extended(true),
+                 firstline(true),
+                 match_unset_backref(true),
+                 multiline(true),
+                 % never_utf(true), % TODO: other options: "Syntax error: using UTF is disabled by the application"
+                 auto_capture(true),
+                 % no_auto_capture(true), % backwards compatibility
+                 auto_possess(true),
+                 dotstar_anchor(true),
+                 start_optimize(true),
+                 ucp(true),
+                 greedy(true),
+                 % ungreedy(true), % Backwards compatibility
+                 utf(true),
+                 never_backslash_c(true),
+                 alt_circumflex(true),
+                 alt_verbnames(true),
+                 use_offset_limit(true),
+                 extended_more(true),
+                 % literal(true), % TODO: Causes syntax error with other options "The only other main options that are allowed with PCRE2_LITERAL are: PCRE2_ANCHORED, PCRE2_ENDANCHORED, PCRE2_AUTO_CALLOUT, PCRE2_CASELESS, PCRE2_FIRSTLINE, PCRE2_MATCH_INVALID_UTF, PCRE2_NO_START_OPTIMIZE, PCRE2_NO_UTF_CHECK, PCRE2_UTF, and PCRE2_USE_OFFSET_LIMIT. The extra options PCRE2_EXTRA_MATCH_LINE and PCRE2_EXTRA_MATCH_WORD"
+                 match_invalid_utf(true),
+                 jit_complete(true),
+                 jit_partial_soft(true),
+                 jit_partial_hard(true),
+                 jit_invalid_utf(true),
+
+                 optimize(true),
+                 capture_type(range),
+                 bsr(anycrlf),
+                 newline(anycrlf)
 	       ]),
     re_portray_string(Regex, RegexStr).
 
+% Note: Match options are tested in compile_match_1
 re_test(compile_config_1_inverse,
-     RegexStr == "<regex>(/./ [JAVASCRIPT_COMPAT NO_UTF8_CHECK UTF8 BSR_UNICODE NEWLINE_CR CAP_RANGE] $capture=0)") :-
+        RegexStr == "<regex>(/./ [compile-~UTF NO_AUTO_CAPTURE NO_AUTO_POSSESS NO_DOTSTAR_ANCHOR NO_START_OPTIMIZE UNGREEDY BSR_UNICODE NEWLINE_NUL CAP_RANGE] $capture=0 $optimise)") :-
     re_compile('.', Regex,
-	       [anchored(false),
-		auto_capture(true),
-		caseless(false),
-		dollar_endonly(false),
-		dotall(false),
-		dupnames(false),
-		extended(false),
-		extra(false),
-		firstline(false),
-		greedy(true),
-		compat(javascript),
-		multiline(false),
-		ucp(false),
-		bol(false),
-		eol(false),
-		empty(false),
-		empty_atstart(false),
-		optimize(false),
-		capture_type(range),
-		bsr(unicode),
-		newline(cr),
-		% Invert them (they'll be ignored):
-		anchored(true),
-		caseless(true),
-                compat(javascript), % Same value because compat(_) has only one value
-		dollar_endonly(true),
-		dotall(true),
-		dupnames(true),
-		extended(true),
-		extra(true),
-		firstline(true),
-		greedy(false),
-		multiline(true),
-		auto_capture(false),
-		ucp(true),
-		bol(true),
-		eol(true),
-		empty(true),
-		empty_atstart(true),
-		optimize(true),
-		capture_type(string),
-		bsr(anycrlf),
-		newline(lf)
+	       [ anchored(false), % Also re_match/3
+                 endanchored(false),
+                 allow_empty_class(false),
+                 alt_bsux(false),
+                 auto_callout(false),
+                 caseless(false),
+                 dollar_endonly(false),
+                 dotall(false),
+                 dupnames(false),
+                 extended(false),
+                 firstline(false),
+                 match_unset_backref(false),
+                 multiline(false),
+                 never_ucp(false),
+                 never_utf(false),
+                 auto_capture(false),
+                 % no_auto_capture(false), % backwards compatibility
+                 auto_possess(false),
+                 dotstar_anchor(false),
+                 start_optimize(false),
+                 ucp(false),
+                 greedy(false),
+                 % ungreedy(false), % Backwards compatibility
+                 utf(false),
+                 never_backslash_c(false),
+                 alt_circumflex(false),
+                 alt_verbnames(false),
+                 use_offset_limit(false),
+                 extended_more(false),
+                 literal(false),
+                 match_invalid_utf(false),
+                 jit_complete(false),
+                 jit_partial_soft(false),
+                 jit_partial_hard(false),
+                 jit_invalid_utf(false),
+
+                 optimize(true),
+                 capture_type(range),
+                 bsr(unicode),
+                 newline(nul),
+
+                 % Invert them (they'll be ignored):
+                 anchored(true), % Also re_match/3
+                 endanchored(true),
+                 allow_empty_class(true),
+                 alt_bsux(true),
+                 auto_callout(true),
+                 caseless(true),
+                 dollar_endonly(true),
+                 dotall(true),
+                 dupnames(true),
+                 extended(true),
+                 firstline(true),
+                 match_unset_backref(true),
+                 multiline(true),
+                 never_ucp(true),
+                 never_utf(true),
+                 auto_capture(true),
+                 % no_auto_capture(true), % backwards compatibility
+                 auto_possess(true),
+                 dotstar_anchor(true),
+                 start_optimize(true),
+                 ucp(true),
+                 greedy(true),
+                 % ungreedy(true), % Backwards compatibility
+                 utf(true),
+                 never_backslash_c(true),
+                 alt_circumflex(true),
+                 alt_verbnames(true),
+                 use_offset_limit(true),
+                 extended_more(true),
+                 literal(true),
+                 match_invalid_utf(true),
+                 jit_complete(true),
+                 jit_partial_soft(true),
+                 jit_partial_hard(true),
+                 jit_invalid_utf(true),
+
+                 optimize(true),
+                 capture_type(string),
+                 bsr(anycrlf),
+                 newline(lf)
 	       ]),
     re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_2,
-     RegexStr == "<regex>(/./ [NO_UTF8_CHECK UTF8 CAP_ATOM] $capture=0)") :-
-    re_compile('.', Regex, [multiline(false),caseless(false),capture_type(atom),foo]),
+     RegexStr == "<regex>(/./ [BSR_UNICODE NEWLINE_NUL CAP_ATOM] $capture=0)") :-
+    re_compile('.', Regex, [multiline(false),caseless(false),capture_type(atom),foo,newline(nul),newline2(cr)]),
     re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_3,
-     RegexStr == "<regex>(/./ [CASELESS MULTILINE NO_UTF8_CHECK UTF8 NEWLINE_LF CAP_TERM] $capture=0)") :-
-    re_compile('.', Regex, [qqsv,zot(123),optimise(false),capture_type(term),multiline(true),caseless(true),newline(lf)]),
+        % TODO: if NEWLINE_CRLF is default on Windows, won't display NEWLINE_CRLF
+        RegexStr == "<regex>(/./ [CASELESS MULTILINE BSR_UNICODE NEWLINE_CRLF CAP_TERM] $capture=0)") :-
+    re_compile('.', Regex, [qqsv,zot(123),optimise(false),capture_type(term),multiline(true),caseless(true),newline(crlf)]),
     re_portray_string(Regex, RegexStr).
 
 re_test(compile_config_4, error(type_error(option, newline(qqsv)), _)) :-
     re_compile('.', _Regex, [newline(qqsv)]).
 
-re_test(compile_exec_1,
-     [RegexStr,  MatchOptsStr, Sub, Sub2] ==
-     ["<regex>(/./ [ANCHORED NO_UTF8_CHECK UTF8 CAP_STRING] $capture=0)",
-      "NOTBOL NOTEMPTY NOTEMPTY_ATSTART NOTEOL NO_UTF8_CHECK $start=0",
-      re_match{0:"a"},
-      re_match{0:"b"}]) :-
+re_test(compile_extra_1, RegexStr == "<regex>(/./ [EXTRA_ALLOW_SURROGATE_ESCAPES EXTRA_BAD_ESCAPE_IS_LITERAL EXTRA_MATCH_WORD EXTRA_MATCH_LINE EXTRA_ESCAPED_CR_IS_LF EXTRA_ALT_BSUX BSR_UNICODE CAP_STRING] $capture=0)") :-
+    re_compile('.', Regex, [extra_allow_surrogate_escapes,
+                            extra_bad_escape_is_literal,
+                            extra_match_word,
+                            extra_match_line,
+                            extra_escaped_cr_is_lf,
+                            extra_alt_bsux]),
+    re_portray_string(Regex, RegexStr).
+
+re_test(compile_jit, fixme(jit_tests)) :-
+    % TODO: also test the options jit_complete, jit_partial_soft, etc. and
+    %       needs updates to write_re_options()
+    re_compile('.', _Regex, [optimize(true)]),
+    fail.
+
+re_test(compile_match_1, [Sub, Sub2] == [re_match{0:"a"}, re_match{0:"b"}]) :-
     re_compile('.', Regex, [anchored(true),bol(false),eol(false),empty(false),empty_atstart(false),start(666)]), % start(666) is ignored
-    MatchOpts = [anchored(false),bol(false),eol(false),empty(false),empty_atstart(false),start(0)], % anchored(false) overrides
+    MatchOpts = [jit(false), anchored(false),bol(false),eol(false),empty(false),empty_atstart(false),start(0)], % anchored(false) overrides in re_match()
     re_portray_match_options_string(MatchOpts, MatchOptsStr),
     re_matchsub(Regex, "abc", Sub, MatchOpts),
+    assertion(MatchOptsStr == "<no pcre2_code> NOTBOL NOTEOL NOTEMPTY NOTEMPTY_ATSTART NO_JIT $start=0"),
     re_portray_string(Regex, RegexStr),
+    % TODO: need to check: the BSR result in the following is the
+    %       default (possibly change the portray code).
+    %       Verify that: re_config(bsr2(unicode))
+    assertion(RegexStr == "<regex>(/./ [compile-ANCHORED BSR_UNICODE CAP_STRING] $capture=0)"),
     re_matchsub(Regex, "abc", Sub2, [start(1)|MatchOpts]).
 
-re_test(compile_exec_2,
-     MatchOptsStr == "NO_UTF8_CHECK $start=999") :-
+re_test(compile_match_2,
+     MatchOptsStr == "<no pcre2_code> $start=999") :-
     re_portray_match_options_string([anchored(false),bol(true),eol(true),empty(true),empty_atstart(true),start(999)],
 					    MatchOptsStr).
 
-re_test(compile_exec_3,
-     MatchOptionsStr == "NO_UTF8_CHECK $start=0") :-
-    re_portray_match_options_string([], MatchOptionsStr).
+re_test(compile_match_3,
+        MatchOptionsStr == "<no pcre2_code> $start=0") :-
+    % TODO: verify that newline(...) is not a pcre2_match() option
+    re_portray_match_options_string([newline(nul)], MatchOptionsStr).
 
 re_test(match_ok_start, Sub==re_match{0:"c"}) :-
     re_matchsub('.', "abc", Sub, [start(2)]).
@@ -496,7 +631,7 @@ re_test(match_bad_start1, error(domain_error(offset,3),_)) :-
     re_matchsub('.', "abc", _Sub, [start(3)]).
 re_test(match_bad_start2,  error(type_error(option,start=3),_)) :-
     re_matchsub('.', "abc", _Sub, [start=3]).
-re_test(match_bad_start3, error(domain_error(int32,0x80000000),_)) :-
+re_test(match_bad_start3, error(domain_error(offset,0x80000000),_)) :-
     re_matchsub('.', "abc", _Sub, [start(0x80000000)]).
 
 re_test(replace_bad_ref_1, error(existence_error(key,1,re_match{0:0-1}),_)) :-
@@ -554,16 +689,18 @@ re_test(wb_1, NewString == "carted") :-
 % Cannot be specified in the SWI library
 % <https://github.com/SWI-Prolog/packages-pcre/issues/5>.
 % https://www.w3.org/TR/xpath-functions/#func-replace
-re_test(wb_2, fixme(javascript_compat)) :-
+% This WILL NOT be fixed -- unless PCRE2 changes its compilation of this kind of regexp
+re_test(wb_2, blocked(javascript_compat)) :-
     re_replace("(ab)|(a)", "[1=$1][2=$2]", "abcd", Result, [compat(javascript)]),
     assertion(Result == "[1=ab][2=]cd").
 
 % Fix for https://github.com/SWI-Prolog/packages-pcre/issues/6
 re_test(wb_3, Result == "abbraccaddabbra") :-
     re_replace("a(.)"/g, "a$1$1", "abracadabra", Result).
+
 % TODO: similar tests for all flags - better than checking whether the
 %       flags have been set (using re_portray_string/2).
-+re_test(greedy_false, Result == re_match{0:"{START} Mary {END}", 1:" Mary "}) :-
+re_test(greedy_false, Result == re_match{0:"{START} Mary {END}", 1:" Mary "}) :-
     re_matchsub("{START}(.*){END}", "{START} Mary {END} had a {START} little lamb {END}", Result, [greedy(false)]).
 
 re_test(greedy_true, Result == re_match{0:"{START} Mary {END} had a {START} little lamb {END}"}, 1:" Mary {END} had a {START} little lamb ") :-
@@ -579,6 +716,9 @@ re_test(foldl_notgreedy_example, Matches == [8-"Mary", 33-"little lamb"]) :-
              String, _{string:String,index:piece}-Matches, _-[],
              [capture_type(range),greedy(false)]).
 
+% TODO: test for options in patterns with write_re_options().
+%       (See comment in write_re_options() for PCRE2_ALLOPTIONS)
+
 :- end_tests(pcre).
 
 % Predicates used by re_foldl tests:
@@ -592,6 +732,10 @@ increment(_Match, V0, V1) :- V1 is V0+1.
 range_match(Dict, StringIndex-[MatchStart-Substring|List], StringIndex-List) :-
     Dict.(StringIndex.index) = MatchStart-MatchLen,
     sub_string(StringIndex.string, MatchStart, MatchLen, _, Substring).
+
+post_split_dot([""], []).
+post_split_dot(["",Letter|Xs], [Letter|Ys]) :-
+    post_split_dot(Xs, Ys).
 
 
 %! re_portray(+Stream, +Regex) is det.

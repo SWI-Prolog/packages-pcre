@@ -39,10 +39,10 @@
             re_matchsub/3,        % +Regex, +String, -Subs
             re_matchsub/4,        % +Regex, +String, -Subs, +Options
             re_foldl/6,           % :Goal, +Regex, +String, ?V0, ?V, +Options
-            re_split/3,		  % +Pattern, +String, -Split:list
-            re_split/4,		  % +Pattern, +String, -Split:list, +Options
-            re_replace/4,	  % +Pattern, +With, +String, -NewString
-            re_replace/5,	  % +Pattern, +With, +String, -NewString, +Options
+            re_split/3,           % +Pattern, +String, -Split:list
+            re_split/4,           % +Pattern, +String, -Split:list, +Options
+            re_replace/4,         % +Pattern, +With, +String, -NewString
+            re_replace/5,         % +Pattern, +With, +String, -NewString, +Options
             re_compile/3,         % +Pattern, -Regex, +Options
             re_flush/0,
             re_config/1           % ?Config
@@ -59,9 +59,11 @@
 
 /** <module> Perl compatible regular expression matching for SWI-Prolog
 
-This module  provides an  interface to  the [PCRE](http://www.pcre.org/)
-(Perl  Compatible Regular  Expression) library.   This Prolog  interface
-provides an almost comprehensive wrapper around PCRE.
+This module provides an interface  to  the [PCRE2](http://www.pcre.org/)
+(Perl Compatible Regular Expression)  library.   This  Prolog  interface
+provides an almost comprehensive wrapper around PCRE2  (the successor to
+PCRE)  with as much backward compatibility to PCRE as possible,  because
+the original implementation was for PCRE (also known as PCRE1).
 
 Regular  expressions  are  created  from   a  pattern  and  options  and
 represented as  a SWI-Prolog _blob_.   This implies they are  subject to
@@ -72,42 +74,71 @@ semantics of the pattern can be additionally modified by options. In the
 latter two cases a regular expression  _blob_ is created and stored in a
 cache. The cache can be cleared using re_flush/0.
 
-@see `man pcreapi` or https://www.pcre.org/original/doc/html/pcreapi.html
-     for details of the PCRE syntax and options.
+@see `man pcre2api` or https://www.pcre.org/current/doc/html/pcre2api.html
+     for details of the PCRE2 syntax and options.
 */
 
 :- predicate_options(re_match/3, 3,
-                     [ anchored(boolean), % Also re_compile/3
+                     [ start(integer), % Not part of pcre2 API
+                       % These are in the same order as in pcre4pl.c, to make it easy to compare them
+                       anchored(boolean),    % Also re_compile/3
+                       utf_check(boolean),   % Also re_compile/3
+                       endanchored(boolean), % Also re_compile/3
                        bol(boolean),
-                       bsr(oneof([anycrlf,unicode])),
+                       eol(boolean),
                        empty(boolean),
                        empty_atstart(boolean),
-                       eol(boolean),
-                       newline(oneof([any,anycrlf,cr,lf,crlf])),
-                       start(integer),
-                       pass_to(re_compile/3, 3)
+                       partial_soft(bool),
+                       partial_hard(bool),
+                       % dfa_restart(bool),  % TODO: if pcre2_dfa_match() is supported
+                       % dfa_shortest(bool), % TODO: if pcre2_dfa_match() is supported
+                       jit(boolean),
+                       copy_matched_subject(boolean)
                      ]).
 :- predicate_options(re_compile/3, 3,
-                     [ anchored(boolean), % Also re_match/3
-                       auto_capture(boolean),
-                       bsr(oneof([anycrlf,unicode])),
-                       capture_type(oneof([atom,string,range])),
+                     [ capture_type(oneof([atom,string,range])), % Not part of pcre2 API
+                       % These are in the same order as in pcre4pl.c, to make it easy to compare them
+                       anchored(boolean),    % Also re_match/3
+                       utf_check(boolean),   % Also re_match/3
+                       endanchored(boolean), % Also re_match/3
+                       allow_empty_class(boolean),
+                       alt_bsux(boolean),
+                       auto_callout(boolean),
                        caseless(boolean),
-                       compat(oneof([javascript])),
                        dollar_endonly(boolean),
                        dotall(boolean),
                        dupnames(boolean),
                        extended(boolean),
-                       extra(boolean),
                        firstline(boolean),
-                       greedy(boolean),
+                       match_unset_backref(boolean),
                        multiline(boolean),
-                       newline(oneof([any,anycrlf,cr,lf,crlf])),
-                       no_auto_capture(boolean), /* Backward compatibility */
-                       optimise(boolean),
-                       optimize(boolean),
+                       never_ucp(boolean),
+                       never_utf(boolean),
+                       auto_capture(boolean),
+                       no_auto_capture(boolean), % backwards compatibility
+                       auto_possess(boolean),
+                       dotstar_anchor(boolean),
+                       start_optimize(boolean),
                        ucp(boolean),
-                       ungreedy(boolean) % Backward compatibility
+                       greedy(boolean),
+                       ungreedy(boolean), % Backwards compatibility
+                       utf(boolean),
+                       never_backslash_c(boolean),
+                       alt_circumflex(boolean),
+                       alt_verbnames(boolean),
+                       use_offset_limit(boolean),
+                       extended_more(boolean),
+                       literal(boolean),
+                       match_invalid_utf(boolean),
+                       jit_complete(boolean),
+                       jit_partial_soft(boolean),
+                       jit_partial_hard(boolean),
+                       jit_invalid_utf(boolean),
+                       bsr(oneof([anycrlf,unicode])),
+                       bsr2(oneof([anycrlf,unicode])),
+                       compat(oneof([])), % Obsolete
+                       newline(oneof([any,anycrlf,cr,lf,crlf,nul])),
+                       newline2(oneof([any,anycrlf,cr,lf,crlf,nul]))
                      ]).
 :- predicate_options(re_matchsub/4, 4,
                      [ pass_to(re_match/3, 3)
@@ -144,14 +175,13 @@ cache. The cache can be cleared using re_flush/0.
 %   following execution-time  Options are recognized and  any others are
 %   ignored:
 %
+%     * start(From)
+%     Start at the given character index
 %     * anchored(Bool)
 %     If `true`, match only at the first position
 %     * bol(Bool)
 %     String is the beginning of a line (default `true`) -
 %       affects behavior of circumflex metacharacter (`^`).
-%     * bsr(Mode)
-%     If `anycrlf`, \R only matches CR, LF or CRLF.  If `unicode`,
-%     \R matches all Unicode line endings.
 %     * empty(Bool)
 %     An empty string is a valid match (default `true`)
 %     * empty_atstart(Bool)
@@ -167,9 +197,16 @@ cache. The cache can be cleared using re_flush/0.
 %     sequences, if `cr`, recognize CR, if `lf`, recognize
 %     LF, if `crlf` recognize CRLF as newline.
 %     The default is determined by how PCRE was built, and
-%     can be found by re_config(newline(NewlineDefault)).
-%     * start(+From)
-%     Start at the given character index
+%     can be found by re_config(newline2(NewlineDefault)).
+%     * newline2(Mode) - synonym for newline(Mode).
+%     * utf_check(Bool) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     You should not need this because SWI-Prolog ensures that the UTF8 strings are valid,
+%     so the default is `false`.
+%     * endanchored(Bool) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * partial_soft(Bool) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * partial_hard(Bool) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * dfa_restart(Bool) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * dfa_shortest(Bool) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
 %
 %   @arg  Regex is  the  output of  re_compile/3, a  pattern  or a  term
 %   Pattern/Flags, where Pattern is an atom or string. The defined flags
@@ -240,7 +277,7 @@ re_matchsub(Regex, String, Subs, Options) :-
 %   dict as specified  for re_matchsub/4.  V0 and V are  related using a
 %   sequence of invocations of Goal as illustrated below.
 %
-%	```
+%       ```
 %       call(Goal, Dict1, V0, V1),
 %       call(Goal, Dict2, V1, V2),
 %       ...
@@ -256,7 +293,7 @@ re_matchsub(Regex, String, Subs, Options) :-
 %         re_foldl(increment, Regex, String, 0, Count, []).
 %
 %     increment(_Match, V0, V1) :-
-%	  V1 is V0+1.
+%         V1 is V0+1.
 %     ```
 %
 %   After which we can query
@@ -289,12 +326,12 @@ re_foldl(Goal, Regex, String, V0, V, Options) :-
     re_compiled(Regex, Compiled, Options),
     re_foldl_(Compiled, String, Goal, V0, V, Options).
 
-:- public re_call_folder/4.
+:- public re_call_folder/4. % prevent code obfusication name mangling
+:- meta_predicate re_call_folder(2, +, ?, ?).
 
 %   re_call_folder(:Goal, +Pairs, ?V0, ?V1).
-%
 %   Used by re_foldl_/6 to call Goal with a dict.
-
+%     DO NOT use "%!" comment - that would add it to the docs
 re_call_folder(Goal, Pairs, V0, V1) :-
     dict_pairs(Dict, re_match, Pairs),
     call(Goal, Dict, V0, V1).
@@ -392,8 +429,8 @@ typed_sub(name, Haystack, B, L, A, Value) :-
 %   Throws  an error  if With  uses  a name  that doesn't  exist in  the
 %   Pattern.
 %
-%   @arg  Pattern is  the pattern  text, optionally  follows by  /Flags.
-%   Flags  may include  `g`,  replacing all  occurences  of Pattern.  In
+%   @arg Pattern  is the  pattern text,  optionally followed  by /Flags.
+%   Flags  may include  `g`, replacing  all occurences  of Pattern.   In
 %   addition, similar  to re_matchsub/4,  the final  output type  can be
 %   controlled  by a  flag `a`  (atom)  or `s`  (string, default).   The
 %   output  type can  also be  specified by  the `capture_type`  option.
@@ -627,11 +664,11 @@ alnum(L) -->
 %!  re_compile(+Pattern, -Regex, +Options) is det.
 %
 %   Compiles Pattern  to a  Regex _blob_ of  type `regex`  (see blob/2).
-%   Defined  Options   are  given   below.   Please  consult   the  PCRE
-%   documentation  for details.   If an  option is  repeated, the  first
-%   value  is  used and  subsequent  values  are ignored.   Unrecognized
-%   options  are ignored.  Unless otherwise  specified, boolean  options
-%   default to `false`.
+%   Defined  Options are  given below.   Please consult  the [PCRE2  API
+%   documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%   for details.  If an option is  repeated, the first value is used and
+%   subsequent values  are ignored.   Unrecognized options  are ignored.
+%   Unless otherwise specified, boolean options default to `false`.
 %
 %   The various matching predicates can take  either a Regex _blob_ or a
 %   string  pattern; if  they  are  given a  string  pattern, they  call
@@ -644,12 +681,14 @@ alnum(L) -->
 %     Enable use of numbered capturing parentheses.
 %     (default `true`)
 %     * bsr(Mode)
-%     If `anycrlf`, \R only matches CR, LF or CRLF.  If `unicode`,
+%     If `anycrlf`, \R only matches CR, LF or CRLF;  if `unicode`,
 %     \R matches all Unicode line endings.
+%     * bsr2(Mode) - synonym for bsr(Mode).
 %     * caseless(Bool)
 %     If `true`, do caseless matching.
 %     * compat(With)
-%     If `javascript`, JavaScript compatibility
+%     Error   -   PCRE1   had  =|compat(javascript)|=   for   JavaScript
+%     compatibility, but PCRE2 has removed that.
 %     * dollar_endonly(Bool)
 %     If `true`, $ not to match newline at end
 %     * dotall(Bool)
@@ -658,30 +697,71 @@ alnum(L) -->
 %     If `true`, allow duplicate names for subpatterns
 %     * extended(Bool)
 %     If `true`, ignore white space and # comments
-%     * extra(Bool)
-%     If `true`, PCRE extra features (not much use currently)
 %     * firstline(Bool)
 %     If `true`, force matching to be before newline
 %     * greedy(Bool)
-%     If `true`, operators such as `+` and `*` are greedy unles
-%     followed by `?`; if `false`, the operators are not greedy
-%     and `?` has the opposite meaning.
-%     (default `true`)
+%     If  `true`,  operators such  as  `+`  and  `*` are  greedy  unless
+%     followed by `?`; if `false`, the  operators are not greedy and `?`
+%     has the opposite meaning. It can also beset by a `(?U)` within the
+%     pattern  -   see  the  [PCRE2  pattern   internal  option  setting
+%     documentation](https://www.pcre.org/current/doc/html/pcre2pattern.html#SEC13)
+%     for details and note that the PCRE2 option is `UNGREEDY`, which is
+%     the inverse of this packages `greedy` options.  (default `true`)
+%     * compat(With)
+%     Raises an  errr - PCRE1 had  =|compat(javascript)|= for JavaScript
+%     compatibility, but PCRE2 has removed that option . Consider using
+%     the `alt_bsux` and `extra_alt_bsux` options.
 %     * multiline(Bool)
 %     If `true`, ^ and $ match newlines within data
 %     * newline(Mode)
-%     If `any`, recognize any Unicode newline sequence,
-%     if `anycrlf` (default), recognize CR, LF, and CRLF as newline
-%     sequences, if `cr`, recognize CR, if `lf`, recognize
-%     LF and finally if `crlf` recognize CRLF as newline.
+%     If  `any`, recognize  any Unicode  newline sequence;  if `anycrlf`
+%     (default), recognize  CR, LF,  and CRLF  as newline  sequences; if
+%     `cr`, recognize CR;  if `lf`, recognize LF;  `crlf` recognize CRLF
+%     as  newline; if  `nul`,  recognize the  NULL  character (0x00)  as
+%     newline.
+%     * newline2(Mode) - synonym for newline(Mode).
 %     * ucp(Bool)
 %     If `true`, use Unicode properties for \d, \w, etc.
+%     * utf_check(Bool) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     You should not need this because SWI-Prolog ensures that the UTF8 strings are valid,
+%     * endanchored(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * allow_empty_class(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * alt_bsux(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * auto_callout(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * match_unset_backref(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * never_ucp(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * never_utf(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * auto_possess(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     (default `true`)
+%     * dotstar_anchor(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     (default `true`)
+%     * start_optimize(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     (default `true`)
+%     * utf(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * never_backslash_c(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * alt_circumflex(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * alt_verbnames(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * use_offset_limit(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * extended_more(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * literal(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * match_invalid_utf(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * jit_complete(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * jit_partial_soft(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * jit_partial_hard(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * jit_invalid_utf(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     * jit(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
+%     (default `true`)
+%     * copy_matched_subject(boolean) - see [PCRE2 API documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
 %
 %   In addition to the options above that directly map to PCRE flags the
 %   following options are processed:
 %
 %     * optimise(Bool) or optimize(Bool)
-%     If `true`, _study_ the regular expression.
+%     Turns on the JIT compiler for additional optimization that greatly
+%     that speeds  up the matching  performance of many  patterns. (Note
+%     that he meaning has changed slightly from the PCRE1 implementation
+%     - PCRE2  always optimises  where possible;  this is  an additional
+%     optimisation.)
 %     * capture_type(+Type)
 %     How to return the matched part  of the input and possibly captured
 %     groups in there.  Possible values are:
@@ -773,20 +853,30 @@ re_flush :-
 %   Term cannot be a variable; re_config/1 doesn't backtrack through all
 %   the possible configuration values.
 %
-%   * bsr
-%     The character  sequences that the  `\R` ecape sequence  matches by
+%   Non-compatible  changes  between  PCRE1 and  PCRE2  because  numeric
+%   values changed: `bsr` and `newline` have been replaced by `bsr2` and
+%   `newline2`:
+%     * `bsr2` - previously `bsr` returned 0 or 1; now returns `unicode`
+%       or `anycrlf`
+%     * `newline2`  -  previously  `newline` returned  an  integer,  now
+%       returns `cr`, `lf`, `crlf`, `any`, `anycrlf`, `nul`
+%
+%  Term values are:
+%   * bsr2
+%     The character  sequences that the `\R` escape sequence  matches by
 %     default.
 %   * jit
 %     `true` if just-in-time compiling is available.
 %   * jittarget
-%     A string contains  the name of the architecture for  which the JIT
+%     A string containing the name of the architecture for which the JIT
 %     compiler is configured.
 %   * link_size
 %   * match_limit
 %   * match_limit_recursion
-%   * newline
-%     An integer  whose value  specifies the default  character sequence
-%     that is recognized as meaning "newline".
+%   * newline2
+%     An atom whose value specifies  the default character sequence that
+%     is  recognized as  meaning "newline"  (`cr`, `lf`,  `crlf`, `any`,
+%     `anycrlf`, `nul`).
 %   * posix_malloc_threshold
 %   * stackrecurse
 %   * unicode_properties
@@ -795,6 +885,16 @@ re_flush :-
 %   * version
 %   The  version information  as an  atom, containing  the PCRE  version
 %   number and release date.
+%
+%   For backwards compatibility with  PCRE1, the following are accepted,
+%   but are deprecated:
+%     * `utf8` - synonym for `unicode`
+%     * `link_size` - synonym for `linksize`
+%     * `parens_limit` - synonym for `parenslimit`
+%   The following  have been removed  because they don't exist  in PCRE2
+%   and don't seem to have any meaningful use in PCRE1:
+%     * `posix_malloc_threshold`
+%     * `match_limit_recursion`
 %
 %   @error `existence_error` if Term isn't defined as a
 %           ``PCRE_CONFIG_*`` constant.

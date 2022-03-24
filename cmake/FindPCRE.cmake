@@ -14,15 +14,18 @@
 #   NOTE: PCRE_FOUND refers to library(pcre) [Prolog package]
 #         PCRE_LIBRARIES, PCRE_INCLUDE_DIRS refer to the foreign code (libpcre2-8.so etc)
 #
-# PCRE_INCLUDE_DIRS	- where to find pcre.h, etc.
-# PCRE_LIBRARIES	- List of libraries when using pcre.
-# PCRE_FOUND		- True if pcre found.
+# PCRE_INCLUDE_DIRS	- where to find pcre2.h, etc.
+# PCRE_LIBRARIES	- List of libraries when using pcre2.
+# PCRE_FOUND		- True if pcre2 found.
 
 # Look for the header file.
-find_path(PCRE_INCLUDE_DIR NAMES pcre.h)
+# TODO: verify the version is at least 10.39. (oldest pcre2 version is 10.10: https://www.pcre.org/changelog.txt)
+find_path(PCRE_INCLUDE_DIR NAMES pcre2.h)
 
-# Look for the library.
-find_library(PCRE_LIBRARY NAMES pcre)
+# Look for the library
+# - sets PCRE_LIBRARY (e.g.: /usr/lib/x86_64-linux-gnu/libpcre2-8.so),
+#        PCRE_INCLUDE_DIR (e.g., /usr/include)
+find_library(PCRE_LIBRARY NAMES pcre2-8)
 
 # Handle the QUIETLY and REQUIRED arguments and set PCRE_FOUND to TRUE if all listed variables are TRUE.
 include(FindPackageHandleStandardArgs)
