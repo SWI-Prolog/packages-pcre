@@ -757,7 +757,7 @@ re_config(term_t opt)
 		  case PCRE2_BSR_ANYCRLF:
 		    return PL_unify_atom_chars(arg, "anycrlf");
 		  default:
-		    Sfprintf(Suser_error, "CFG_BSR: 0x%08x\n", val.i_unsigned);
+		    Sdprintf("CFG_BSR: 0x%08x\n", val.i_unsigned);
 		    assert(0);
 		}
 	      case CFG_NEWLINE:
@@ -770,7 +770,7 @@ re_config(term_t opt)
 		    case PCRE2_NEWLINE_ANYCRLF: c = "anycrlf"; break;
 		    case PCRE2_NEWLINE_NUL:     c = "nul";     break;
 		    default:
-		      Sfprintf(Suser_error, "CFG_NEWLINE: 0x%08x\n", val.i_unsigned);
+		      Sdprintf("CFG_NEWLINE: 0x%08x\n", val.i_unsigned);
 		      assert(0);
 		  }
 		  return PL_unify_atom_chars(arg, c);
@@ -779,7 +779,7 @@ re_config(term_t opt)
 		return PL_existence_error("re_config", opt);
 	      case CFG_TRUE:
 	      default:
-		Sfprintf(Suser_error, "PCRE2_CONFIG type(1): 0x%08x", o->type);
+		Sdprintf("PCRE2_CONFIG type(1): 0x%08x", o->type);
 		assert(0);
 	    }
 	  } else
@@ -988,7 +988,7 @@ write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
     { case PCRE2_BSR_ANYCRLF: c = "BSR_ANYCRLF"; break;
       case PCRE2_BSR_UNICODE: c = "BSR_UNICODE"; break;
       default:
-	Sfprintf(Suser_error, "GET_PCRE2_INFO_BSR: 0x%08x\n", ui);
+	Sdprintf("GET_PCRE2_INFO_BSR: 0x%08x\n", ui);
 	assert(0);
       }
     Sfprintf(s, "%s%s", *sep, c);
@@ -1016,7 +1016,7 @@ write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
 	case PCRE2_NEWLINE_ANYCRLF: c = "NEWLINE_ANYCRLF"; break;
 	case PCRE2_NEWLINE_NUL:     c = "NEWLINE_NUL";     break;
 	default:
-	  Sfprintf(Suser_error, "GET_PCRE2_INFO_NEWLINE: 0x%08x\n", ui);
+	  Sdprintf("GET_PCRE2_INFO_NEWLINE: 0x%08x\n", ui);
 	  assert(0);
       }
       Sfprintf(s, "%s%s", *sep, c);
@@ -1274,7 +1274,7 @@ put_capval(term_t t, const re_data *re, re_subject *subject, int i, const PCRE2_
       return rc;
     }
     default:
-      Sfprintf(Suser_error, "PUT_CAPVAL ctype: 0x%08x\n", ctype);
+      Sdprintf("PUT_CAPVAL ctype: 0x%08x\n", ctype);
       assert(0);
       return FALSE;
   }
@@ -1326,7 +1326,7 @@ static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
 re_error(int ec) /* ec is error code from pcre2_match() etc */
 { switch(ec)
   { case 0:				/* Too short ovector */
-      Sfprintf(Suser_error, "RE_ERROR: 0\n");
+      Sdprintf("RE_ERROR: 0\n");
       assert(0); /* Should not happen because we used pcre2_match_data_create_from_pattern() */
     case PCRE2_ERROR_NOMATCH:
       return FALSE;
@@ -1344,7 +1344,7 @@ re_error(int ec) /* ec is error code from pcre2_match() etc */
     /* TODO: add all the other pcre2_compile(), pcre2_match(), etc. codes here
 	     and verify that they shouldn't happen. */
     default:
-      Sfprintf(Suser_error, "RE_ERROR: 0x%08x\n", ec);
+      Sdprintf("RE_ERROR: 0x%08x\n", ec);
       assert(0);			/* TBD */
   }
 
