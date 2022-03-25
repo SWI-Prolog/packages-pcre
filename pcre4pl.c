@@ -465,19 +465,27 @@ static re_optdef re_optdefs[] =
   { "use_offset_limit",	    PCRE2_USE_OFFSET_LIMIT,	RE_COMP_BOOL },
   { "extended_more",	    PCRE2_EXTENDED_MORE,	RE_COMP_BOOL },
   { "literal",		    PCRE2_LITERAL,		RE_COMP_BOOL },
+#ifdef PCRE2_MATCH_INVALID_UTF
   { "match_invalid_utf",    PCRE2_MATCH_INVALID_UTF,	RE_COMP_BOOL },
+#endif
 
   { "extra_allow_surrogate_escapes", PCRE2_EXTRA_ALLOW_SURROGATE_ESCAPES, RE_COMPCTX_BOOL },
   { "extra_bad_escape_is_literal",   PCRE2_EXTRA_BAD_ESCAPE_IS_LITERAL,	  RE_COMPCTX_BOOL },
   { "extra_match_word",	             PCRE2_EXTRA_MATCH_WORD,		  RE_COMPCTX_BOOL },
   { "extra_match_line",              PCRE2_EXTRA_MATCH_LINE,		  RE_COMPCTX_BOOL },
+#ifdef PCRE2_EXTRA_ESCAPED_CR_IS_LF
   { "extra_escaped_cr_is_lf",        PCRE2_EXTRA_ESCAPED_CR_IS_LF,	  RE_COMPCTX_BOOL },
+#endif
+#ifdef PCRE2_EXTRA_ALT_BSUX
   { "extra_alt_bsux",                PCRE2_EXTRA_ALT_BSUX,		  RE_COMPCTX_BOOL },
+#endif
 
   { "jit_complete",     PCRE2_JIT_COMPLETE,	RE_COMPJIT_BOOL },
   { "jit_partial_soft", PCRE2_JIT_PARTIAL_SOFT,	RE_COMPJIT_BOOL },
   { "jit_partial_hard", PCRE2_JIT_PARTIAL_HARD,	RE_COMPJIT_BOOL },
+#ifdef PCRE2_JIT_INVALID_UTF
   { "jit_invalid_utf",  PCRE2_JIT_INVALID_UTF ,	RE_COMPJIT_BOOL },
+#endif
 
   /* Some of the follwoing are for pcre2_dfa_match() or
      pcre2_substitute(), but they're all in the same flag */
@@ -495,7 +503,9 @@ static re_optdef re_optdefs[] =
   { "substitute_unknown_unset",   PCRE2_SUBSTITUTE_UNKNOWN_UNSET,   RE_MATCH_BOOL },
   { "substitute_overflow_length", PCRE2_SUBSTITUTE_OVERFLOW_LENGTH, RE_MATCH_BOOL },
   { "jit",                        PCRE2_NO_JIT,                     RE_MATCH_BOOL|RE_NEG }, /* TODO: see comment in pcre2.h */
+#ifdef PCRE2_COPY_MATCHED_SUBJECT
   { "copy_matched_subject",       PCRE2_COPY_MATCHED_SUBJECT,       RE_MATCH_BOOL },
+#endif
 
   /* TODO: PCRE2_CONVERT_xxx if we support (experimental) pcre2_pattern_convert() */
 
@@ -954,7 +964,9 @@ write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
     write_option_str(s, sep, &ui, PCRE2_USE_OFFSET_LIMIT,    "USE_OFFSET_LIMIT");
     write_option_str(s, sep, &ui, PCRE2_EXTENDED_MORE,       "EXTENDED_MORE");
     write_option_str(s, sep, &ui, PCRE2_LITERAL,             "LITERAL");
+#ifdef PCRE2_MATCH_INVALID_UTF
     write_option_str(s, sep, &ui, PCRE2_MATCH_INVALID_UTF,   "MATCH_INVALID_UTF");
+#endif
     if ( ui )
     { Sfprintf(s, "%s<all:remainder:0x%08x>", *sep, ui);
       *sep = " ";
@@ -967,8 +979,12 @@ write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
     write_option_str(s, sep, &ui, PCRE2_EXTRA_BAD_ESCAPE_IS_LITERAL,   "EXTRA_BAD_ESCAPE_IS_LITERAL");
     write_option_str(s, sep, &ui, PCRE2_EXTRA_MATCH_WORD,              "EXTRA_MATCH_WORD");
     write_option_str(s, sep, &ui, PCRE2_EXTRA_MATCH_LINE,              "EXTRA_MATCH_LINE");
+#ifdef PCRE2_EXTRA_ESCAPED_CR_IS_LF
     write_option_str(s, sep, &ui, PCRE2_EXTRA_ESCAPED_CR_IS_LF,        "EXTRA_ESCAPED_CR_IS_LF");
+#endif
+#ifdef PCRE2_EXTRA_ALT_BSUX
     write_option_str(s, sep, &ui, PCRE2_EXTRA_ALT_BSUX,                "EXTRA_ALT_BSUX");
+#endif
     if ( ui )
     { Sfprintf(s, "%s<all:remainder:0x%08x>", *sep, ui);
       *sep = " ";
@@ -1052,7 +1068,9 @@ write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
     write_option_str(s, sep, &ui, PCRE2_SUBSTITUTE_UNKNOWN_UNSET,   "SUBSTITUTE_UNKNOWN_UNSET");
     write_option_str(s, sep, &ui, PCRE2_SUBSTITUTE_OVERFLOW_LENGTH, "SUBSTITUTE_OVERFLOW_LENGTH");
     write_option_str(s, sep, &ui, PCRE2_NO_JIT,                     "NO_JIT");
+#ifdef PCRE2_COPY_MATCHED_SUBJECT
     write_option_str(s, sep, &ui, PCRE2_COPY_MATCHED_SUBJECT,       "COPY_MATCHED_SUBJECT");
+#endif
     if ( ui )
     { Sfprintf(s, "%s<all:remainder:0x%08x>", ui);
       *sep = " ";

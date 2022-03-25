@@ -440,11 +440,10 @@ re_test(compile_portray_2,
     re_compile("(?<foo>.)([a-z]*)(?<bar_A>.)", Regex, []),
     re_portray_string(Regex, RegexStr).
 
-re_test(compile_config_1,
+re_test(compile_config_1, true) :-
         % negative: NO_AUTO_CAPTURE NO_AUTO_POSSES NO_DOTSTAR_ANCHOR NO_START_OPTIMIZE UNGREEDY
         % defaulted: NO_UTF_CHECK UTF
         % TODO: missing: JIT_COMPLETE JIT_PARTIAL_SOFT JIT_PARTIAL_HARD JIT_INVALID_UTF
-        RegexStr == "<regex>(/./ [compile-ANCHORED compile-ENDANCHORED ALLOW_EMPTY_CLASS ALT_BSUX AUTO_CALLOUT CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED FIRSTLINE MATCH_UNSET_BACKREF MULTILINE UCP NEVER_BACKSLASH_C ALT_CIRCUMFLEX ALT_VERBNAMES USE_OFFSET_LIMIT EXTENDED_MORE MATCH_INVALID_UTF BSR_ANYCRLF NEWLINE_ANYCRLF CAP_RANGE] $capture=0 $optimise)") :-
     re_compile('.',  Regex,
 	       [ anchored(true), % Also re_match/3
                  endanchored(true),
@@ -486,7 +485,10 @@ re_test(compile_config_1,
                  bsr(anycrlf),
                  newline(anycrlf)
 	       ]),
-    re_portray_string(Regex, RegexStr).
+    re_portray_string(Regex, RegexStr),
+    assertion((RegexStr == "<regex>(/./ [compile-ANCHORED compile-ENDANCHORED ALLOW_EMPTY_CLASS ALT_BSUX AUTO_CALLOUT CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED FIRSTLINE MATCH_UNSET_BACKREF MULTILINE UCP NEVER_BACKSLASH_C ALT_CIRCUMFLEX ALT_VERBNAMES USE_OFFSET_LIMIT EXTENDED_MORE MATCH_INVALID_UTF BSR_ANYCRLF NEWLINE_ANYCRLF CAP_RANGE] $capture=0 $optimise)"
+	      ;RegexStr == "<regex>(/./ [compile-ANCHORED compile-ENDANCHORED ALLOW_EMPTY_CLASS ALT_BSUX AUTO_CALLOUT CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED FIRSTLINE MATCH_UNSET_BACKREF MULTILINE UCP NEVER_BACKSLASH_C ALT_CIRCUMFLEX ALT_VERBNAMES USE_OFFSET_LIMIT EXTENDED_MORE BSR_ANYCRLF NEWLINE_ANYCRLF CAP_RANGE] $capture=0 $optimise)")).
+
 
 % Note: Match options are tested in compile_match_1
 re_test(compile_config_1_inverse,
@@ -591,14 +593,16 @@ re_test(compile_config_3,
 re_test(compile_config_4, error(type_error(option, newline(qqsv)), _)) :-
     re_compile('.', _Regex, [newline(qqsv)]).
 
-re_test(compile_extra_1, RegexStr == "<regex>(/./ [EXTRA_ALLOW_SURROGATE_ESCAPES EXTRA_BAD_ESCAPE_IS_LITERAL EXTRA_MATCH_WORD EXTRA_MATCH_LINE EXTRA_ESCAPED_CR_IS_LF EXTRA_ALT_BSUX BSR_UNICODE CAP_STRING] $capture=0)") :-
+re_test(compile_extra_1, true) :-
     re_compile('.', Regex, [extra_allow_surrogate_escapes,
                             extra_bad_escape_is_literal,
                             extra_match_word,
                             extra_match_line,
                             extra_escaped_cr_is_lf,
                             extra_alt_bsux]),
-    re_portray_string(Regex, RegexStr).
+    re_portray_string(Regex, RegexStr),
+    assertion((RegexStr == "<regex>(/./ [EXTRA_ALLOW_SURROGATE_ESCAPES EXTRA_BAD_ESCAPE_IS_LITERAL EXTRA_MATCH_WORD EXTRA_MATCH_LINE EXTRA_ESCAPED_CR_IS_LF EXTRA_ALT_BSUX BSR_UNICODE CAP_STRING] $capture=0)"
+	      ;RegexStr == "<regex>(/./ [EXTRA_ALLOW_SURROGATE_ESCAPES EXTRA_BAD_ESCAPE_IS_LITERAL EXTRA_MATCH_WORD EXTRA_MATCH_LINE BSR_UNICODE CAP_STRING] $capture=0)")).
 
 re_test(compile_jit, fixme(jit_tests)) :-
     % TODO: also test the options jit_complete, jit_partial_soft, etc. and
