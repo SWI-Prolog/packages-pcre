@@ -787,9 +787,10 @@ re_config(term_t opt)
 	    { case CFG_TRUE:
 		return PL_unify_bool(arg, 1);
 	      case CFG_INVALID:
+	      case CFG_STRINGBUF: /* JW: Dubious.  Returned for jittarget if there is no JIT support */
 		return PL_existence_error("re_config", opt);
 	      default:
-		Sfprintf(Suser_error, "PCRE2_CONFIG type(2): 0x%08x", o->type);
+		Sdprintf("PCRE2_CONFIG type(2): 0x%08x", o->type);
 		assert(0);
 	    }
 	  }

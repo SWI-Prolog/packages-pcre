@@ -351,9 +351,11 @@ re_test(config_jit) :-
     re_config(jit(V)),
     must_be(boolean, V).
 re_test(config_jittarget) :-
-    (   re_config(jittarget(V))
+    E = error(Formal,_),
+    catch(re_config(jittarget(V)), E, true),
+    (   var(Formal)
     ->  must_be(atom, V)
-    ;   true			% no JIT support
+    ;   Formal = existence_error(re_config, jittarget(V)) % no JIT support
     ).
 re_test(config_newline, error(existence_error(re_config,newline(V)),_)) :-
     re_config(newline(V)).
