@@ -370,7 +370,8 @@ re_test(config_bsr2) :-
 re_test(config_link_size) :-
     re_config(link_size(V)),
     must_be(integer, V).
-re_test(config_posix_malloc_threshold, error(existence_error(re_config,posix_malloc_threshold(V)),_)) :-
+re_test(config_posix_malloc_threshold,
+	error(existence_error(re_config,posix_malloc_threshold(V)),_)) :-
     re_config(posix_malloc_threshold(V)),
     must_be(integer, V).
 re_test(config_parens_limit) :-
@@ -379,7 +380,8 @@ re_test(config_parens_limit) :-
 re_test(config_match_limit) :-
     re_config(match_limit(V)),
     must_be(integer, V).
-re_test(config_match_limit_recursion, error(existence_error(re_config,match_limit_recursion(V)),_)) :-
+re_test(config_match_limit_recursion,
+	error(existence_error(re_config,match_limit_recursion(V)),_)) :-
     re_config(match_limit_recursion(V)),
     must_be(integer, V).
 re_test(config_stackrecurse) :-
