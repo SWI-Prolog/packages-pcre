@@ -474,7 +474,7 @@ static re_optdef re_optdefs[] =
   { "extra_escaped_cr_is_lf",        PCRE2_EXTRA_ESCAPED_CR_IS_LF,	  RE_COMPCTX_BOOL },
   { "extra_alt_bsux",                PCRE2_EXTRA_ALT_BSUX,		  RE_COMPCTX_BOOL },
 
-  { "jit_complete",     PCRE2_JIT_COMPLETE, 	RE_COMPJIT_BOOL },
+  { "jit_complete",     PCRE2_JIT_COMPLETE,	RE_COMPJIT_BOOL },
   { "jit_partial_soft", PCRE2_JIT_PARTIAL_SOFT,	RE_COMPJIT_BOOL },
   { "jit_partial_hard", PCRE2_JIT_PARTIAL_HARD,	RE_COMPJIT_BOOL },
   { "jit_invalid_utf",  PCRE2_JIT_INVALID_UTF ,	RE_COMPJIT_BOOL },
@@ -771,6 +771,7 @@ re_config(term_t opt)
 		    case PCRE2_NEWLINE_NUL:     c = "nul";     break;
 		    default:
 		      Sdprintf("CFG_NEWLINE: 0x%08x\n", val.i_unsigned);
+		      c = "?";
 		      assert(0);
 		  }
 		  return PL_unify_atom_chars(arg, c);
@@ -989,6 +990,7 @@ write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
       case PCRE2_BSR_UNICODE: c = "BSR_UNICODE"; break;
       default:
 	Sdprintf("GET_PCRE2_INFO_BSR: 0x%08x\n", ui);
+        c = "?";
 	assert(0);
       }
     Sfprintf(s, "%s%s", *sep, c);
@@ -1017,6 +1019,7 @@ write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
 	case PCRE2_NEWLINE_NUL:     c = "NEWLINE_NUL";     break;
 	default:
 	  Sdprintf("GET_PCRE2_INFO_NEWLINE: 0x%08x\n", ui);
+	  c = "?";
 	  assert(0);
       }
       Sfprintf(s, "%s%s", *sep, c);
