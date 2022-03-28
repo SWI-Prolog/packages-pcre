@@ -137,6 +137,11 @@ re_test(compile_option1, error(type_error(option,compat(javascript)),_)) :-
 re_test(compile_option2, error(type_error(option,compat(qqsv)),_)) :-
     re_compile("a+b", _Re, [compat(qqsv)]).
 
+% compile_memoryleak tests that a memory leak doesn't happen because
+% the blob unification failed.
+re_test(compile_memory_double_free, fail) :-
+    re_compile(".", foo, []).
+
 re_test(start, Sub == re_match{0:"es"}) :-
     re_compile("e.", Re, []),
     re_matchsub(Re, "aapenootjes", Sub, [start(4)]).
@@ -593,6 +598,11 @@ re_test(compile_config_3,
 re_test(compile_config_4, error(type_error(option, newline(qqsv)), _)) :-
     re_compile('.', _Regex, [newline(qqsv)]).
 
+% TODO: extra_match_line(true) results in compile-ANCHORED with
+%       PCRE2_INFO_ALLOPTIONS but not with PCRE2_INFO_ARGOPTIONS (in
+%       write_re_options())
+%       - is this a bug in pcre2 or expected behavior?
+
 re_test(compile_extra_1, true) :-
     re_compile('.', Regex, [extra_allow_surrogate_escapes,
                             extra_bad_escape_is_literal,
@@ -648,6 +658,9 @@ re_test(replace_bad_ref_2, error(existence_error(key,1,re_match{0:0-1,foo:0-1}),
     re_replace("(?<foo>.)", "$1", "abc", _).
 re_test(replace_bad_ref_3, error(existence_error(key,foob,re_match{0:0-1,foo:0-1}),_)) :-
     re_replace("(?<foo>.)", "${foob}", "abc", _).
+% replace_bad_ref_4 is also a memory leak test - it causes the call to
+% init_capture_map() to fail, but some fields in the blob have already
+% been allocated.
 re_test(replace_bad_ref_4, error(existence_error(re_type_flag, 'X'), _)) :-
     re_replace("(?<foo_X>.)", "${foo}", "xabc", _).
 re_test(replace_ok_ref_4a, Result == "xabc") :-

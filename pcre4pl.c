@@ -102,6 +102,35 @@ typedef struct re_options_flags
    flags that are specific to pcre2_match() - match_options_flags,
    start_flags.
 */
+
+/* A note about memory management of blobs in general (from Jan,
+   slightly edited).
+
+   Blobs are in the end atoms (or actually, the other way around). The
+   blob handle is a tagged offset into a dynamic array of atoms
+   structures. The atom content is malloc'ed (unless the blob uses the
+   NOCOPY flag).
+
+   So, neither are affected by stack shifts, GC, etc. Only atom-gc may
+   invalidate an entry of the array, call the release hook to dispose
+   of resources associated to the blob's content and finally call
+   free() on the content. After invalidation, the handle may be
+   reused. For Prolog, reuse is safe as we are guaranteed that the
+   previous version was unreachable. Foreign code must use
+   PL_register_atom() when storing the handle in some permanent
+   location to prevent atom-GC reclaiming it.
+
+   PL_get_atom() does not register the atom, because it is protected
+   by the term you got it from.  PL_new_atom() returns a registered
+   atom to avoid GC reclaiming it as soon as you created it (GC runs
+   concurrently).
+
+   It is not likely anything will ever change here. Memory-wise it
+   would be interesting to maintain the content strings in something
+   more clever than malloc() and shift them to avoid fragmentation. In
+   a concurrent system this is very hard to do safely.
+  */
+
 typedef struct re_data
 { atom_t            pattern;		/* pattern (as atom) */
   re_options_flags  compile_options_flags;
@@ -141,26 +170,51 @@ init_re_data(re_data *re)
 static void
 write_re_options(IOSTREAM *s, const char **sep, const re_data *re);
 
-static int
-release_pcre(atom_t symbol)
-{ re_data *re = (re_data *)PL_blob_data(symbol, NULL, NULL);
+/* This code is useful for debugging memory leaks in conjunction with
+   the print statement in free_pcre(). */
+static void
+acquire_pcre(atom_t symbol)
+{
+  #ifdef O_DEBUG
+  re_data *re = (re_data *)PL_blob_data(symbol, NULL, NULL);
+  Sdprintf("ACQUIRE_PCRE <regex>(%p)\n", re);
+  #endif
+}
 
+static int
+free_pcre(re_data *re)
+{ /* TODO: clearing the freed items (by assigning 0 or NULL)
+           isn't necessary. */
   if ( re->pattern )
-    PL_unregister_atom(re->pattern);
+  { PL_unregister_atom(re->pattern);
+    re->pattern = 0;
+  }
   pcre2_code_free(re->pcre2_code);
+  re->pcre2_code = NULL;
   if ( re->capture_names )
   { uint32_t i;
 
     for(i=0; i<re->capture_size+1; i++)
     { if ( re->capture_names[i].name )
-	PL_unregister_atom(re->capture_names[i].name);
+      {	PL_unregister_atom(re->capture_names[i].name);
+        re->capture_names[i].name = 0;
+      }
     }
 
     free(re->capture_names);
+    re->capture_names = NULL;
   }
   return TRUE;
 }
 
+static int
+release_pcre(atom_t symbol)
+{ re_data *re = (re_data *)PL_blob_data(symbol, NULL, NULL);
+  #ifdef O_DEBUG
+  Sdprintf("RELEASE_PCRE <regex>(%p)\n", re);
+  #endif
+  return free_pcre(re);
+}
 
 static functor_t FUNCTOR_pair2;		/* -/2 */
 
@@ -175,8 +229,14 @@ compare_pcres(atom_t a, atom_t b)
 { re_data *rea = (re_data *)PL_blob_data(a, NULL, NULL);
   re_data *reb = (re_data *)PL_blob_data(b, NULL, NULL);
 
-  /* TODO: Is this stable (e.g., if the blob is moved around in memory)? */
-  /*       Use PL_compare(PL_get_atom(rea->pattern), PL_get_atom(reb->pattern) ? */
+  /* See note about memory management of blobs (with the definition of
+     re_data) and why the following test is stable. */
+
+  /* TODO: PL_compare(PL_get_atom(rea->pattern),
+           PL_get_atom(reb->pattern) ?  But not important, because
+           we're mainly interestesd in an equality test and some kind
+           of total ordering.  */
+
   return ( rea > reb ?  1 :
 	   reb < rea ? -1 : 0
 	 );
@@ -199,7 +259,7 @@ static PL_blob_t pcre2_blob =
   release_pcre,
   compare_pcres,
   write_pcre,
-  NULL, /* default (do nothing) for acquire */
+  acquire_pcre,
   NULL, /* TODO: save */
   NULL  /* TODO: load */
 };
@@ -1006,7 +1066,7 @@ write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
       case PCRE2_BSR_UNICODE: c = "BSR_UNICODE"; break;
       default:
 	Sdprintf("GET_PCRE2_INFO_BSR: 0x%08x\n", ui);
-        c = "?";
+	c = "?";
 	assert(0);
       }
     Sfprintf(s, "%s%s", *sep, c);
@@ -1129,6 +1189,7 @@ re_portray(term_t stream, term_t regex)
 static foreign_t
 re_compile(term_t pat, term_t reb, term_t options)
 { int rc; /* Every path (to label out) must set rc */
+  int must_free_blob = TRUE;
   size_t len;
   char *pats;
   pcre2_compile_context *compile_ctx = NULL;
@@ -1180,8 +1241,8 @@ re_compile(term_t pat, term_t reb, term_t options)
     { pcre2_jit_compile(re.pcre2_code, re.jit_options_flags.flags);
       /* TBD: handle error that's not from no jit support, etc. */
       /* TODO: unit test to verify jit compile worked and
-               that options were handled properly - needs changes
-               to write_re_options() */
+	       that options were handled properly - needs changes
+	       to write_re_options() */
     }
     if ( !init_capture_map(&re) )
     { /* init_capture_map() has called an appropriate PL_..._error()
@@ -1195,6 +1256,7 @@ re_compile(term_t pat, term_t reb, term_t options)
       PL_register_atom(re.pattern);
     else
       re.pattern = PL_new_atom_mbchars(REP_UTF8, len, pats);
+    must_free_blob = FALSE;
     rc = PL_unify_blob(reb, &re, sizeof re, &pcre2_blob);
     goto out;
   } else
@@ -1206,6 +1268,8 @@ re_compile(term_t pat, term_t reb, term_t options)
 
  out:
   pcre2_compile_context_free(compile_ctx);
+  if ( must_free_blob )
+    free_pcre(&re);
   return rc;
 }
 
@@ -1406,7 +1470,7 @@ re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
   { int re_rc = pcre2_match(re.pcre2_code,
 			    (PCRE2_SPTR)subject.subject, subject.length,
 			    utf8_start, re.match_options_flags.flags,
-			    match_data, NULL);  // TODO: NULL=>pcre2_match_context
+			    match_data, NULL);  /* TODO: pcre2_match_context instead of NULL */
 
     if ( re_rc > 0 )			/* match */
     { if ( result )
@@ -1482,7 +1546,7 @@ re_foldl_(term_t regex, term_t on,
   { int re_rc = pcre2_match(re.pcre2_code,
 			    (PCRE2_SPTR)subject.subject, subject.length,
 			    utf8_start, re.match_options_flags.flags,
-			    match_data, NULL);  // TODO: NULL=>pcre2_match_context
+			    match_data, NULL);  /* TODO: pcre2_match_context instead of NULL */
     if ( re_rc > 0 )
     { const PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(match_data);
       PL_put_variable(av+1);
