@@ -94,7 +94,7 @@ typedef struct re_options_flags
   uint32_t flags;
 } re_options_flags;
 
-/* The data in a "regex" blob. This is created by re_compile() and a
+/* The data in a "regex" blob. This is created by re_compile_() and a
    local copy is used by the matching functions (see get_re_copy()).
 
    The flags don't need to be kept, but they're convenient for
@@ -102,34 +102,6 @@ typedef struct re_options_flags
    flags that are specific to pcre2_match() - match_options_flags,
    start_flags.
 */
-
-/* A note about memory management of blobs in general (from Jan,
-   slightly edited).
-
-   Blobs are in the end atoms (or actually, the other way around). The
-   blob handle is a tagged offset into a dynamic array of atoms
-   structures. The atom content is malloc'ed (unless the blob uses the
-   NOCOPY flag).
-
-   So, neither are affected by stack shifts, GC, etc. Only atom-gc may
-   invalidate an entry of the array, call the release hook to dispose
-   of resources associated to the blob's content and finally call
-   free() on the content. After invalidation, the handle may be
-   reused. For Prolog, reuse is safe as we are guaranteed that the
-   previous version was unreachable. Foreign code must use
-   PL_register_atom() when storing the handle in some permanent
-   location to prevent atom-GC reclaiming it.
-
-   PL_get_atom() does not register the atom, because it is protected
-   by the term you got it from.  PL_new_atom() returns a registered
-   atom to avoid GC reclaiming it as soon as you created it (GC runs
-   concurrently).
-
-   It is not likely anything will ever change here. Memory-wise it
-   would be interesting to maintain the content strings in something
-   more clever than malloc() and shift them to avoid fragmentation. In
-   a concurrent system this is very hard to do safely.
-  */
 
 typedef struct re_data
 { atom_t            pattern;		/* pattern (as atom) */
@@ -176,15 +148,15 @@ static void
 acquire_pcre(atom_t symbol)
 {
   #ifdef O_DEBUG
-  re_data *re = (re_data *)PL_blob_data(symbol, NULL, NULL);
-  Sdprintf("ACQUIRE_PCRE <regex>(%p)\n", re);
+  const re_data *re = PL_blob_data(symbol, NULL, NULL);
+  Sdprintf("ACQUIRE_PCRE <regex>(%p, /%s/)\n", re, PL_atom_chars(re->pattern));
   #endif
 }
 
 static int
 free_pcre(re_data *re)
 { /* TODO: clearing the freed items (by assigning 0 or NULL)
-           isn't necessary. */
+	   isn't necessary. */
   if ( re->pattern )
   { PL_unregister_atom(re->pattern);
     re->pattern = 0;
@@ -197,7 +169,7 @@ free_pcre(re_data *re)
     for(i=0; i<re->capture_size+1; i++)
     { if ( re->capture_names[i].name )
       {	PL_unregister_atom(re->capture_names[i].name);
-        re->capture_names[i].name = 0;
+	re->capture_names[i].name = 0;
       }
     }
 
@@ -209,9 +181,9 @@ free_pcre(re_data *re)
 
 static int
 release_pcre(atom_t symbol)
-{ re_data *re = (re_data *)PL_blob_data(symbol, NULL, NULL);
+{ re_data *re = PL_blob_data(symbol, NULL, NULL);
   #ifdef O_DEBUG
-  Sdprintf("RELEASE_PCRE <regex>(%p)\n", re);
+  Sdprintf("RELEASE_PCRE <regex>(%p, /%s/)\n", re, PL_atom_chars(re->pattern));
   #endif
   return free_pcre(re);
 }
@@ -226,19 +198,15 @@ static functor_t FUNCTOR_pair2;		/* -/2 */
 
 static int
 compare_pcres(atom_t a, atom_t b)
-{ re_data *rea = (re_data *)PL_blob_data(a, NULL, NULL);
-  re_data *reb = (re_data *)PL_blob_data(b, NULL, NULL);
-
-  /* See note about memory management of blobs (with the definition of
-     re_data) and why the following test is stable. */
-
-  /* TODO: PL_compare(PL_get_atom(rea->pattern),
-           PL_get_atom(reb->pattern) ?  But not important, because
-           we're mainly interestesd in an equality test and some kind
-           of total ordering.  */
-
-  return ( rea > reb ?  1 :
-	   reb < rea ? -1 : 0
+{ const re_data *rea = PL_blob_data(a, NULL, NULL);
+  const re_data *reb = PL_blob_data(b, NULL, NULL);
+  int comparison = (rea->pattern == reb->pattern) ? 0 :
+    strcmp(PL_atom_chars(rea->pattern), PL_atom_chars(reb->pattern));
+  if ( comparison ) /* if not equal */
+    return comparison;
+  /* Same pattern, so use address (which is stable) to break tie: */
+  return ( (rea > reb) ?  1 :
+	   (rea < reb) ? -1 : 0
 	 );
 }
 
@@ -246,8 +214,9 @@ compare_pcres(atom_t a, atom_t b)
 static int
 write_pcre(IOSTREAM *s, atom_t symbol, int flags)
 { (void)flags; /* unused arg */
-  re_data *re = (re_data *)PL_blob_data(symbol, NULL, NULL);
-  Sfprintf(s, "<regex>(%p)", re);	/* For blob details: re_portray() - re_portray/2 */
+  const re_data *re = PL_blob_data(symbol, NULL, NULL);
+  /* For blob details: re_portray_() - re_portray/2 */
+  Sfprintf(s, "<regex>(%p, /%s/)", re, PL_atom_chars(re->pattern));
   return TRUE;
 }
 
@@ -736,11 +705,13 @@ re_get_options(term_t options, re_data *re,
 
 typedef enum re_config_type
 { CFG_INTEGER,
+  CFG_INTEGER_BKWD,	/* Backwards compatibility with PCRE1 */
   CFG_BOOL,
+  CFG_BOOL_BKWD,	/* Backwards compatibility with PCRE1 */
   CFG_STRINGBUF,
   CFG_BSR,
   CFG_NEWLINE,
-  CFG_TRUE,
+  CFG_TRUE_BKWD,	/* Backwards compatibility with PCRE1 */
   CFG_INVALID
 } re_config_type;
 
@@ -749,7 +720,8 @@ typedef struct re_config_opt
 { char		 *name;
   int		  id;
   re_config_type  type;
-  atom_t	  atom; /* Initially 0; filled in as-needed by re_config() */
+  atom_t	  atom;    /* Initially 0; filled in as-needed by re_config_() */
+  functor_t       functor; /* Initially 0; filled in as-needed by re_config_choices_() */
 } re_config_opt;
 
 /* Items with id == -1 are for backwards compatibility with PCRE1 */
@@ -761,27 +733,93 @@ static re_config_opt cfg_opts[] =
   { "heaplimit",	      PCRE2_CONFIG_HEAPLIMIT,		   CFG_INTEGER },   /* PCRE2 */
   { "jit",		      PCRE2_CONFIG_JIT,			   CFG_BOOL },
   { "jittarget",	      PCRE2_CONFIG_JITTARGET,		   CFG_STRINGBUF },
-  { "link_size",	      PCRE2_CONFIG_LINKSIZE,		   CFG_INTEGER },
+  { "link_size",	      PCRE2_CONFIG_LINKSIZE,		   CFG_INTEGER_BKWD },
   { "linksize",		      PCRE2_CONFIG_LINKSIZE,		   CFG_INTEGER },   /* PCRE2 */ /* was LINK_SIZE */
-  { "match_limit",	      PCRE2_CONFIG_MATCHLIMIT,		   CFG_INTEGER },
+  { "match_limit",	      PCRE2_CONFIG_MATCHLIMIT,		   CFG_INTEGER_BKWD },
   { "match_limit_recursion",  -1,				   CFG_INVALID },
   { "matchlimit",	      PCRE2_CONFIG_MATCHLIMIT,		   CFG_INTEGER },   /* PCRE2 */
   { "never_backslash_c",      PCRE2_CONFIG_NEVER_BACKSLASH_C,	   CFG_BOOL },	    /* PCRE2 */
   { "newline2",		      PCRE2_CONFIG_NEWLINE,		   CFG_NEWLINE },
-  { "parens_limit",	      PCRE2_CONFIG_PARENSLIMIT,		   CFG_INTEGER },
+  { "parens_limit",	      PCRE2_CONFIG_PARENSLIMIT,		   CFG_INTEGER_BKWD },
   { "parenslimit",	      PCRE2_CONFIG_PARENSLIMIT,		   CFG_INTEGER },   /* PCRE2 */ /* was PARENS_LIIMT */
   { "posix_malloc_threshold", -1,				   CFG_INVALID },
   { "stackrecurse",	      PCRE2_CONFIG_STACKRECURSE,	   CFG_BOOL },
   { "unicode",		      PCRE2_CONFIG_UNICODE,		   CFG_BOOL },	    /* PCRE2 */
-  { "unicode_properties",     -1,				   CFG_TRUE },
+  { "unicode_properties",     -1,				   CFG_TRUE_BKWD },
   { "unicode_version",	      PCRE2_CONFIG_UNICODE_VERSION,	   CFG_STRINGBUF }, /* PCRE2 */
-  { "utf8",		      PCRE2_CONFIG_UNICODE,		   CFG_BOOL },	    /* backward compatibility with PCRE1 */
+  { "utf8",		      PCRE2_CONFIG_UNICODE,		   CFG_BOOL_BKWD },
   { "version",		      PCRE2_CONFIG_VERSION,		   CFG_STRINGBUF }, /* PCRE2 */
   /*			      PCRE2_CONFIG_RECURSIONLIMIT Obsolete synonym */
-  /*			      PCRE2_CONFIG_STACKRECURSE	  Obsolete synonym */
 
   { NULL }
 };
+
+static intptr_t
+next_config(intptr_t i)
+{ re_config_opt *def = &cfg_opts[i];
+  for( ; def->name; def++ )
+  { switch(def->type)
+    { case CFG_INVALID:
+      case CFG_BOOL_BKWD:
+      case CFG_INTEGER_BKWD:
+      case CFG_TRUE_BKWD:
+	break;
+      default:
+	if ( !def->atom ) /* lazily fill in atoms in lookup table ... */
+	  def->atom = PL_new_atom(def->name);
+	if ( !def->functor ) /* ... and functors */
+	  def->functor = PL_new_functor(def->atom, 1);
+	return def - cfg_opts;
+    }
+  }
+  return -1;
+}
+
+/** re_config_choice(--Choice) is nondet.
+
+    Unify Choice with an option (a term with the argument
+    uninstantiated) for re_config/1. Backtracks through all
+    possibilities. Used by re_config/1 when its argument is
+    uninstantiated. It's intended that re_config_choice/1 is called
+    with Choice uninstantiated, to allow backtracking through all the
+    possibilities (see re_config/1, which calls re_config_().
+
+    The context "handle" is the index into cfg_opts - initially 0, and
+    incremented by 1 for each retry. next_config() is used to get the
+    next entry, skipping those that are now invalid or are for
+    backwards compatibility.
+*/
+static foreign_t
+re_config_choice_(term_t choice, control_t handle)
+{ intptr_t index;
+
+  /* This code could be made slightly more efficient by passing around
+     the next value of index -- this would avoid a final choicepoint.
+  */
+
+  switch( PL_foreign_control(handle) )
+  { case PL_FIRST_CALL:
+      index = 0;
+      break;
+    case PL_REDO:
+      index = PL_foreign_context(handle);
+      break;
+    case PL_PRUNED:
+      PL_succeed;
+    default:
+      assert(0);
+  }
+
+  if ( !PL_is_variable(choice) )
+    return PL_uninstantiation_error(choice);
+
+  index = next_config(index);
+  if ( index >= 0 &&
+       PL_unify_functor(choice, cfg_opts[index].functor) )
+    PL_retry(index + 1);
+  else
+    PL_fail;
+}
 
 
 /** re_config(+Term)
@@ -789,7 +827,7 @@ static re_config_opt cfg_opts[] =
     For documentation of this function, see pcre.pl
 */
 static foreign_t
-re_config(term_t opt)
+re_config_(term_t opt)
 { atom_t name;
   size_t arity;
 
@@ -815,8 +853,10 @@ re_config(term_t opt)
 	  if ( pcre2_config(o->id, &val) >= 0 )
 	  { switch(o->type)
 	    { case CFG_BOOL:
+	      case CFG_BOOL_BKWD:
 		return PL_unify_bool(arg, val.i_signed);
 	      case CFG_INTEGER:
+	      case CFG_INTEGER_BKWD:
 		return PL_unify_integer(arg, val.i_signed);
 	      case CFG_STRINGBUF:
 		return PL_unify_atom_chars(arg, val.s_buf);
@@ -847,19 +887,20 @@ re_config(term_t opt)
 		  return PL_unify_atom_chars(arg, c);
 		}
 	      case CFG_INVALID:
-		return PL_existence_error("re_config", opt);
-	      case CFG_TRUE:
+		return FALSE; /* was: PL_existence_error("re_config", opt); */
+	      case CFG_TRUE_BKWD:
+		return PL_unify_bool(arg, 1);
 	      default:
 		Sdprintf("PCRE2_CONFIG type(1): 0x%08x", o->type);
 		assert(0);
 	    }
 	  } else
 	  { switch(o->type)
-	    { case CFG_TRUE:
+	    { case CFG_TRUE_BKWD:
 		return PL_unify_bool(arg, 1);
 	      case CFG_INVALID:
 	      case CFG_STRINGBUF: /* JW: Dubious.  Returned for jittarget if there is no JIT support */
-		return PL_existence_error("re_config", opt);
+		return FALSE; /* was: PL_existence_error("re_config", opt); */
 	      default:
 		Sdprintf("PCRE2_CONFIG type(2): 0x%08x", o->type);
 		assert(0);
@@ -868,12 +909,12 @@ re_config(term_t opt)
 	}
       }
 
-      return PL_existence_error("re_config", opt);
+      return FALSE; /* waas: PL_existence_error("re_config", opt); */
     }
-    return PL_type_error("compound", opt);
+    return FALSE; /* was: PL_type_error("compound", opt); */
   }
 
-  return PL_type_error("compound", opt);
+  return FALSE; /* was: PL_type_error("compound", opt); */
 }
 
 static int
@@ -1145,7 +1186,7 @@ write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
     ('$re_match_options'/2 handles the match options)
 */
 static foreign_t
-re_portray(term_t stream, term_t regex)
+re_portray_(term_t stream, term_t regex)
 { IOSTREAM *fd;
   re_data re;
   const char *sep = "";
@@ -1187,7 +1228,7 @@ re_portray(term_t stream, term_t regex)
     For documentation of this function, see pcre.pl
 */
 static foreign_t
-re_compile(term_t pat, term_t reb, term_t options)
+re_compile_(term_t pat, term_t reb, term_t options)
 { int rc; /* Every path (to label out) must set rc */
   int must_free_blob = TRUE;
   size_t len;
@@ -1580,13 +1621,14 @@ install_t
 install_pcre4pl(void)
 { FUNCTOR_pair2 = PL_new_functor(PL_new_atom("-"), 2);
 
-  PL_register_foreign("re_config",    1, re_config,    0);
-  PL_register_foreign("re_compile",   3, re_compile,   0);
+  PL_register_foreign("re_config_",   1, re_config_,   0);
+  PL_register_foreign("re_compile",   3, re_compile_,  0);
   PL_register_foreign("re_match_",    3, re_match_,    0);
   PL_register_foreign("re_matchsub_", 4, re_matchsub_, 0);
   PL_register_foreign("re_foldl_",    6, re_foldl_,    0);
+  PL_register_foreign("re_config_choice", 1, re_config_choice_, PL_FA_NONDETERMINISTIC);
   /* The following two are used by test_pcre.pl but are not exported
      from pcre.pl, so are used with the pcre: module prefix: */
-  PL_register_foreign("re_portray",   2, re_portray,   0);
+  PL_register_foreign("re_portray",   2, re_portray_,  0);
   PL_register_foreign("re_portray_match_options", 2, re_portray_match_options_, 0);
 }

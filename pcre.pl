@@ -850,8 +850,8 @@ re_flush :-
 %   etc.  Value is a Prolog boolean, integer, or atom. For boolean (1 or
 %   0) values, `true` or `false` is returned.
 %
-%   Term cannot be a variable; re_config/1 doesn't backtrack through all
-%   the possible configuration values.
+%   re_config/1 will backtrack through all the possible configuration
+%   values if its argument is a variable.
 %
 %   Non-compatible  changes  between  PCRE1 and  PCRE2  because  numeric
 %   values changed: `bsr` and `newline` have been replaced by `bsr2` and
@@ -864,41 +864,56 @@ re_flush :-
 %  Term values are:
 %   * bsr2
 %     The character  sequences that the `\R` escape sequence  matches by
-%     default.
+%     default. Replaces `bsr` option from PCRE1, which is not compatible.
+%   * compiled_widths
+%     An integer whose  lower bits indicate which code  unit widths were
+%     selected when PCRE2 was built.  The 1-bit indicates 8-bit support,
+%     and  the  2-bit and  4-bit  indicate  16-bit and  32-bit  support,
+%     respectively. The 1  bit should always be set  because the wrapper
+%     code requires 8 bit support.
+%   * depthlimit
+%   * heaplimit
 %   * jit
 %     `true` if just-in-time compiling is available.
 %   * jittarget
 %     A string containing the name of the architecture for which the JIT
-%     compiler is configured.
-%   * link_size
-%   * match_limit
-%   * match_limit_recursion
+%     compiler is configured. e.g., 'x86 64bit (little endian + unaligned)'.
+%   * linksize
+%   * matchlimit
+%   * never_backslash_c
 %   * newline2
 %     An atom whose value specifies  the default character sequence that
 %     is  recognized as  meaning "newline"  (`cr`, `lf`,  `crlf`, `any`,
-%     `anycrlf`, `nul`).
-%   * posix_malloc_threshold
+%     `anycrlf`, `nul`).  Replaces `newline` option from PCRE1, which is
+%     not compatible.
+%   * parenslimit
 %   * stackrecurse
-%   * unicode_properties
-%   * utf8
+%   * unicode
+%     Always `true`
+%   * unicode_version
+%     The unicode version as an atom, e.g. '12.1.0'.
+%   * utf8 - synonym for `unicode`
 %   * parens_limit
 %   * version
 %   The  version information  as an  atom, containing  the PCRE  version
-%   number and release date.
+%   number and release date, e.g. '10.34 2019-11-21'.
 %
 %   For backwards compatibility with  PCRE1, the following are accepted,
 %   but are deprecated:
 %     * `utf8` - synonym for `unicode`
 %     * `link_size` - synonym for `linksize`
+%     * `match_limit` - synonym for `matchlimit`
 %     * `parens_limit` - synonym for `parenslimit`
+%     * `unicode_properties` - always true
 %   The following  have been removed  because they don't exist  in PCRE2
 %   and don't seem to have any meaningful use in PCRE1:
 %     * `posix_malloc_threshold`
 %     * `match_limit_recursion`
-%
-%   @error `existence_error` if Term isn't defined as a
-%           ``PCRE_CONFIG_*`` constant.
-%   @error `type_error` if Term isn't a 1-arity compound term.
-%   @error `instantiation_error` if Term is a variable.
-%
-%   @see `man pcreapi` for details
+
+%   @see `man pcre2api` for details
+
+re_config(Term), var(Term) =>
+    re_config_choice(Term),
+    re_config_(Term).
+re_config(Term) =>
+    re_config_(Term).

@@ -314,18 +314,16 @@ re_test(replace_date, NewString == "4/20/2017") :-
                "2017-04-20",
                NewString).
 
-re_test(config_not_compound1, error(type_error(compound,version(A,B)),_)) :-
-    re_config(version(A,B)).
-re_test(config_not_compound2, error(type_error(compound,foo(A,B)),_)) :-
-    re_config(foo(A,B)).
-re_test(config_not_compound3, error(type_error(compound,bsr),_)) :-
+re_test(config_not_compound1, fail) :- % was: error(type_error(compound,version(A,B)),_)
+    re_config(version(_A,_B)).
+re_test(config_not_compound2, fail) :- % was: error(type_error(compound,foo(A,B)),_)
+    re_config(foo(_A,_B)).
+re_test(config_not_compound3, fail) :- % was: error(type_error(compound,bsr),_)
     re_config(bsr).
-re_test(config_not_compound4, error(type_error(compound,123),_)) :-
+re_test(config_not_compound4, fail) :- % was: error(type_error(compound,123),_)
     re_config(123).
-re_test(config_not_compound5, error(instantiation_error,_)) :-
-    re_config(_).
-re_test(config_invalid, error(existence_error(re_config,qqsv(V)),_)) :-
-    re_config(qqsv(V)).
+re_test(config_invalid, fail) :- % was: error(existence_error(re_config,qqsv(V)),_)
+    re_config(qqsv(_V)).
 re_test(config_version) :-
     re_config(version(V)),
     must_be(atom, V), % TODO: V is of the form '10.34 2019-11-21'.
@@ -337,9 +335,41 @@ re_test(config_version_type, fail) :-
 test(config_version_value1, [setup((re_config(version(V)),
 			     atomic_concat(V, '---', V2))),
                              fail]) :-
-    % Test that re_config(version(V2)) fails when given an argument
+    % Tests that re_config(version(V2)) fails when given an argument
     % that is guaranteed to not be the version (it has an extra '---' on the end)
     re_config(version(V2)).
+re_test(config_all1) :-
+    forall(re_config(Config),
+           assertion(ground(Config))).
+re_test(config_all2) :-
+    forall(re_config(Config),
+           ( re_config(Config),
+             assertion(ground(Config)) )).
+% The following tests that our documentation matches the code.  The
+% validity test uses =/2 because the query instantiates the values.
+re_test(config_all3, DocSorted = ConfigsSorted) :-
+    Doc = [bsr2(_),
+           compiled_widths(_),
+           depthlimit(_),
+           heaplimit(_),
+           jit(_),
+           jittarget(_),
+           linksize(_),
+           matchlimit(_),
+           never_backslash_c(_),
+           newline2(_),
+           parenslimit(_),
+           stackrecurse(_),
+           unicode(_),
+           unicode_version(_),
+           version(_)
+           ],
+    sort(Doc, DocSorted),
+    bagof(C, re_config(C), Configs),
+    assertion(ground(Configs)),
+    msort(Configs, ConfigsSorted), % note msort/2, in case of dups
+    % For more easily finding the first mismatch:
+    maplist(assertion_eq, DocSorted, ConfigsSorted).
 test(config_version_value2, [setup(re_config(version(V)))]) :-
     re_config(version(V)).
 re_test(config_utf8) :-
@@ -362,21 +392,20 @@ re_test(config_jittarget) :-
     ->  must_be(atom, V)
     ;   Formal = existence_error(re_config, jittarget(V)) % no JIT support
     ).
-re_test(config_newline, error(existence_error(re_config,newline(V)),_)) :-
-    re_config(newline(V)).
+re_test(config_newline, fail) :- % was: error(existence_error(re_config,newline(V)),_)
+    re_config(newline(_V)). % newline in PCRE1 becomes newline2 in PCRE2
 re_test(config_newline2) :-
     re_config(newline2(V)),
     assertion(memberchk(V, [cr,lf,crlf,any,anycrlf,nul])).
-re_test(config_bsr, error(existence_error(re_config,bsr(V)),_)) :-
-    re_config(bsr(V)).
+re_test(config_bsr, fail) :- % was: error(existence_error(re_config,bsr(V)),_)
+    re_config(bsr(_V)). % bsr in PCRE1 becomes bsr2 in PCRE2
 re_test(config_bsr2) :-
     re_config(bsr2(V)),
     assertion(memberchk(V, [unicode,anycrlf])).
 re_test(config_link_size) :-
     re_config(link_size(V)),
     must_be(integer, V).
-re_test(config_posix_malloc_threshold,
-	error(existence_error(re_config,posix_malloc_threshold(V)),_)) :-
+re_test(config_posix_malloc_threshold, fail) :- % was: error(existence_error(re_config,posix_malloc_threshold(V)),_)
     re_config(posix_malloc_threshold(V)),
     must_be(integer, V).
 re_test(config_parens_limit) :-
@@ -385,8 +414,7 @@ re_test(config_parens_limit) :-
 re_test(config_match_limit) :-
     re_config(match_limit(V)),
     must_be(integer, V).
-re_test(config_match_limit_recursion,
-	error(existence_error(re_config,match_limit_recursion(V)),_)) :-
+re_test(config_match_limit_recursion, fail) :- % was: error(existence_error(re_config,posix_malloc_threshold(V)),_)
     re_config(match_limit_recursion(V)),
     must_be(integer, V).
 re_test(config_stackrecurse) :-
@@ -491,6 +519,9 @@ re_test(compile_config_1, true) :-
                  newline(anycrlf)
 	       ]),
     re_portray_string(Regex, RegexStr),
+    % Older versions of PCRE2 don't have MATCH_INVALID_UTF
+    % TODO: wrap the test with re_config(version(V)) to control
+    %       which RegexStr should match
     assertion((RegexStr == "<regex>(/./ [compile-ANCHORED compile-ENDANCHORED ALLOW_EMPTY_CLASS ALT_BSUX AUTO_CALLOUT CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED FIRSTLINE MATCH_UNSET_BACKREF MULTILINE UCP NEVER_BACKSLASH_C ALT_CIRCUMFLEX ALT_VERBNAMES USE_OFFSET_LIMIT EXTENDED_MORE MATCH_INVALID_UTF BSR_ANYCRLF NEWLINE_ANYCRLF CAP_RANGE] $capture=0 $optimise)"
 	      ;RegexStr == "<regex>(/./ [compile-ANCHORED compile-ENDANCHORED ALLOW_EMPTY_CLASS ALT_BSUX AUTO_CALLOUT CASELESS DOLLAR_ENDONLY DOTALL DUPNAMES EXTENDED FIRSTLINE MATCH_UNSET_BACKREF MULTILINE UCP NEVER_BACKSLASH_C ALT_CIRCUMFLEX ALT_VERBNAMES USE_OFFSET_LIMIT EXTENDED_MORE BSR_ANYCRLF NEWLINE_ANYCRLF CAP_RANGE] $capture=0 $optimise)")).
 
@@ -611,14 +642,17 @@ re_test(compile_extra_1, true) :-
                             extra_escaped_cr_is_lf,
                             extra_alt_bsux]),
     re_portray_string(Regex, RegexStr),
+    % Older versions of PCRE2 don't have EXTRA_ESCAPED_CR_IS_LF EXTRA_ALT_BSUX
+    % TODO: wrap the test with re_config(version(V)) to control
+    %       which RegexStr should match
     assertion((RegexStr == "<regex>(/./ [EXTRA_ALLOW_SURROGATE_ESCAPES EXTRA_BAD_ESCAPE_IS_LITERAL EXTRA_MATCH_WORD EXTRA_MATCH_LINE EXTRA_ESCAPED_CR_IS_LF EXTRA_ALT_BSUX BSR_UNICODE CAP_STRING] $capture=0)"
 	      ;RegexStr == "<regex>(/./ [EXTRA_ALLOW_SURROGATE_ESCAPES EXTRA_BAD_ESCAPE_IS_LITERAL EXTRA_MATCH_WORD EXTRA_MATCH_LINE BSR_UNICODE CAP_STRING] $capture=0)")).
 
-re_test(compile_jit, fixme(jit_tests)) :-
+re_test(compile_jit) :-
     % TODO: also test the options jit_complete, jit_partial_soft, etc. and
-    %       needs updates to write_re_options()
-    re_compile('.', _Regex, [optimize(true)]),
-    fail.
+    %       needs updates to write_re_options().
+    %       Needs to be conditional, according to re_config(jit(true)).
+    re_compile('.', _Regex, [optimize(true)]).
 
 re_test(compile_match_1, [Sub, Sub2] == [re_match{0:"a"}, re_match{0:"b"}]) :-
     re_compile('.', Regex, [anchored(true),bol(false),eol(false),empty(false),empty_atstart(false),start(666)]), % start(666) is ignored
@@ -737,10 +771,39 @@ re_test(foldl_notgreedy_example, Matches == [8-"Mary", 33-"little lamb"]) :-
              String, _{string:String,index:piece}-Matches, _-[],
              [capture_type(range),greedy(false)]).
 
+% compare* regression tests - there was a long-standing typo in the
+% code that wasn't caught because there was no test.
+re_test(compare1) :-
+    re_compile('a', Re1, []),
+    re_compile('a', Re2, []),
+    with_output_to(string(Re1Str), write(current_output, Re1)),
+    with_output_to(string(Re2Str), write(current_output, Re2)),
+    compare(Comp1, Re1Str, Re2Str),
+    compare(Comp2, Re1, Re2),    % Same regexp, different pointers
+    assertion(Comp1 == Comp2),
+    assertion(memberchk(Comp1, [(<), (>)])).
+re_test(compare2) :-
+    % It would be nice to check that ReB has a pointer that's < ReA's
+    % pointer, but that isn't guaranteed. If it were, we could compare
+    % the "write" strings as an additional check that the pattern
+    % strings are compared before the pointers (which is how the code
+    % in compare_pcres() is written).
+    re_compile('b', ReB, []),
+    re_compile('a', ReA, []),
+    compare(CompareBlob, ReB, ReA),
+    assertion(CompareBlob == (>)). % internal knowledge: pattern strings are compared: b > a
+re_test(compare3) :-
+    re_compile('a', Re1, []),
+    compare(Comp1, Re1, Re1),
+    assertion(Comp1 == (=)).
+
 % TODO: test for options in patterns with write_re_options().
 %       (See comment in write_re_options() for PCRE2_ALLOPTIONS)
 
 :- end_tests(pcre).
+
+assertion_eq(A, B) :-
+    assertion(A = B).
 
 % Predicates used by re_foldl tests:
 
