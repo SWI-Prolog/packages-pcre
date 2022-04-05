@@ -810,6 +810,7 @@ re_config_choice_(term_t choice, control_t handle)
       PL_succeed;
     default:
       assert(0);
+      PL_fail;
   }
 
   if ( !PL_is_variable(choice) )
