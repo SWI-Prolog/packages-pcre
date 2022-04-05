@@ -793,7 +793,7 @@ next_config(intptr_t i)
 */
 static foreign_t
 re_config_choice_(term_t choice, control_t handle)
-{ intptr_t index;
+{ intptr_t index = 0 ;
 
   /* This code could be made slightly more efficient by passing around
      the next value of index -- this would avoid a final choicepoint.
@@ -801,7 +801,6 @@ re_config_choice_(term_t choice, control_t handle)
 
   switch( PL_foreign_control(handle) )
   { case PL_FIRST_CALL:
-      index = 0;
       break;
     case PL_REDO:
       index = PL_foreign_context(handle);
