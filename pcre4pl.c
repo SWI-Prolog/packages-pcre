@@ -4,6 +4,7 @@
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
     Copyright (c)  2017-2022, VU University Amsterdam
+			      SWI-Prolog Solution b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -200,10 +201,23 @@ static int
 compare_pcres(atom_t a, atom_t b)
 { const re_data *rea = PL_blob_data(a, NULL, NULL);
   const re_data *reb = PL_blob_data(b, NULL, NULL);
-  int comparison = (rea->pattern == reb->pattern) ? 0 :
-    strcmp(PL_atom_chars(rea->pattern), PL_atom_chars(reb->pattern));
-  if ( comparison ) /* if not equal */
+  int comparison;
+
+  if ( rea->pattern == reb->pattern )
+  { comparison = 0;
+  } else
+  { const pl_wchar_t *sa, *sb;
+
+    PL_STRINGS_MARK();
+    sa = PL_atom_wchars(rea->pattern, NULL);
+    sb = PL_atom_wchars(reb->pattern, NULL);
+    comparison = wcscmp(sa, sb);
+    PL_STRINGS_RELEASE();
+  }
+
+  if ( comparison )
     return comparison;
+
   /* Same pattern, so use address (which is stable) to break tie: */
   return ( (rea > reb) ?  1 :
 	   (rea < reb) ? -1 : 0
@@ -216,7 +230,9 @@ write_pcre(IOSTREAM *s, atom_t symbol, int flags)
 { (void)flags; /* unused arg */
   const re_data *re = PL_blob_data(symbol, NULL, NULL);
   /* For blob details: re_portray_() - re_portray/2 */
-  Sfprintf(s, "<regex>(%p, /%s/)", re, PL_atom_chars(re->pattern));
+  PL_STRINGS_MARK();
+  Sfprintf(s, "<regex>(%p, /%Ws/)", re, PL_atom_wchars(re->pattern, NULL));
+  PL_STRINGS_RELEASE();
   return TRUE;
 }
 
