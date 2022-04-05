@@ -33,7 +33,6 @@
     POSSIBILITY OF SUCH DAMAGE.
 */
 
-/* #define O_DEBUG 1 */
 /* See also: https://www.regular-expressions.info/pcre2.html */
 /* See also: https://github.com/PhilipHazel/pcre2/issues/51 */
 /* See also: https://www.regular-expressions.info/pcre2.html */
@@ -46,6 +45,7 @@
 #include <string.h>
 #include <assert.h>
 #include <pcre2.h>
+
 
 		 /*******************************
 		 *	      RE STRUCT		*
@@ -143,17 +143,6 @@ init_re_data(re_data *re)
 static void
 write_re_options(IOSTREAM *s, const char **sep, const re_data *re);
 
-/* This code is useful for debugging memory leaks in conjunction with
-   the print statement in free_pcre(). */
-static void
-acquire_pcre(atom_t symbol)
-{
-  #ifdef O_DEBUG
-  const re_data *re = PL_blob_data(symbol, NULL, NULL);
-  Sdprintf("ACQUIRE_PCRE <regex>(%p, /%s/)\n", re, PL_atom_chars(re->pattern));
-  #endif
-}
-
 static int
 free_pcre(re_data *re)
 { /* TODO: clearing the freed items (by assigning 0 or NULL)
@@ -183,9 +172,6 @@ free_pcre(re_data *re)
 static int
 release_pcre(atom_t symbol)
 { re_data *re = PL_blob_data(symbol, NULL, NULL);
-  #ifdef O_DEBUG
-  Sdprintf("RELEASE_PCRE <regex>(%p, /%s/)\n", re, PL_atom_chars(re->pattern));
-  #endif
   return free_pcre(re);
 }
 
@@ -244,7 +230,7 @@ static PL_blob_t pcre2_blob =
   release_pcre,
   compare_pcres,
   write_pcre,
-  acquire_pcre,
+  NULL, /* acquire */
   NULL, /* TODO: save */
   NULL  /* TODO: load */
 };
