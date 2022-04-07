@@ -173,7 +173,9 @@ cache. The cache can be cleared using re_flush/0.
 %   Options for  re_compile/3 can  be used, in  addition to  the Options
 %   listed below. If Regex is the  result of re_compile/3, then only the
 %   following execution-time  Options are recognized and  any others are
-%   ignored:
+%   ignored. Some options may not exist on your system, depending on the
+%   PCRE2 version and  how it was built - these  unsupported options are
+%   silently ignored.
 %
 %     * start(From)
 %     Start at the given character index
@@ -668,7 +670,10 @@ alnum(L) -->
 %   documentation](https://www.pcre.org/current/doc/html/pcre2api.html)
 %   for details.  If an option is  repeated, the first value is used and
 %   subsequent values  are ignored.   Unrecognized options  are ignored.
-%   Unless otherwise specified, boolean options default to `false`.
+%   Unless otherwise specified, boolean options default to `false`. Some
+%   options may not exist on your system, depending on the PCRE2 version
+%   and  how it  was  built  - these  unsupported  options are  silently
+%   ignored.
 %
 %   The various matching predicates can take  either a Regex _blob_ or a
 %   string  pattern; if  they  are  given a  string  pattern, they  call
@@ -850,8 +855,9 @@ re_flush :-
 %   etc.  Value is a Prolog boolean, integer, or atom. For boolean (1 or
 %   0) values, `true` or `false` is returned.
 %
-%   re_config/1 will backtrack through all the possible configuration
-%   values if its argument is a variable.
+%   re_config/1 will  backtrack through  all the  possible configuration
+%   values  if its  argument  is a  variable. If  an  unknown option  is
+%   specified, re_config/1 fails.
 %
 %   Non-compatible  changes  between  PCRE1 and  PCRE2  because  numeric
 %   values changed: `bsr` and `newline` have been replaced by `bsr2` and
@@ -861,7 +867,9 @@ re_flush :-
 %     * `newline2`  -  previously  `newline` returned  an  integer,  now
 %       returns `cr`, `lf`, `crlf`, `any`, `anycrlf`, `nul`
 %
-%  Term values are:
+%  Term values are as follows. Some values might not exist, depending on
+%  the version of PCRE2 and the options it was built with.
+%
 %   * bsr2
 %     The character  sequences that the `\R` escape sequence  matches by
 %     default. Replaces `bsr` option from PCRE1, which is not compatible.
@@ -914,6 +922,10 @@ re_flush :-
 
 re_config(Term), var(Term) =>
     re_config_choice(Term),
+    % This code depends on re_config_/1 failing if it's given an invalid
+    % Term (e.g., re_config_(jittarget(_)) fails if jit(false)). If
+    % re_config_/1 is changed to throw an error, then the following call
+    % needs to be inside catch/3.
     re_config_(Term).
 re_config(Term) =>
     re_config_(Term).

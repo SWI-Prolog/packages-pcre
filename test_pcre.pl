@@ -47,6 +47,26 @@
 :- use_module(library(error)).
 :- use_module(library(debug), [assertion/1]).
 
+/* Testing notes.
+
+   Different versions of PCRE2 can cause problems.
+   Following are some results from running pcre2_mingw.c
+       https://gist.github.com/kamahen/9f54a160773125f382c81d2b5470a872
+   gcc pcre2_mingw.c -lpcre2-8 && ./a.out
+
+   (Ubuntu 20.04.1 with apt libpcre2-dev)
+     VERSION (len=17 rc=17) 0x0000000b: '10.34 2019-11-21'
+     JITTARGET (len=38 rc=38) 0x00000002: 'x86 64bit (little endian + unaligned)'
+     UNICODE_VERSION (len=7 rc=7) 0x0000000a: '12.1.0'
+     JIT (len=4 rc=0) 0x00000001: 0x00000001
+
+   (MacOS M1, MinGW)
+     VERSION (len=17 rc=17) 0x0000000b: '10.39 2021-10-29'
+     FAILED: JITTARGET len=-34 rc=-34
+     UNICODE_VERSION (len=7 rc=7) 0x0000000a: '14.0.0'
+     JIT (len=4 rc=0) 0x00000001: 0x00000000
+*/
+
 test_pcre :-
     run_tests([ pcre
 	      ]).
@@ -281,17 +301,17 @@ re_test(replace_capture_type_precedence3, NewString == 'A[1]bA[2]A[3]c') :-
     re_replace("a(\\d)"/gas, "A[\\1]", "a1ba2a3c", NewString, [capture_type(string)]).
 
 re_test(replace_unicode1,
-     [condition(re_config(utf8(true))),
+     [condition(re_config(unicode(true))),
       true(NewString == "網目錦蛇 [reticulated python へび]")]) :-
     re_replace('àmímé níshíkíhéꜜbì', "reticulated python へび",
 	       '網目錦蛇 [àmímé níshíkíhéꜜbì]', NewString).
 re_test(replace_unicode2,
-     [condition(re_config(utf8(true))),
+     [condition(re_config(unicode(true))),
       true(NewString == "網目錦へび [àmímé níshíkíhéꜜbì]")]) :-
     re_replace('(a蛇é)+', "へび",
 	       '網目錦a蛇éa蛇éa蛇éa蛇é [àmímé níshíkíhéꜜbì]', NewString).
 re_test(replace_unicode3,
-     [condition(re_config(utf8(true))),
+     [condition(re_config(unicode(true))),
       true(NewString == "網目へび [àmímé níshíkíhéꜜbì]")]) :-
     re_replace("[蛇錦]+", "へび",
 	       "網目錦蛇 [àmímé níshíkíhéꜜbì]", NewString).
@@ -348,12 +368,11 @@ re_test(config_all2) :-
 % The following tests that our documentation matches the code.  The
 % validity test uses =/2 because the query instantiates the values.
 re_test(config_all3, DocSorted = ConfigsSorted) :-
-    Doc = [bsr2(_),
+    Doc0 = [bsr2(_),
            compiled_widths(_),
            depthlimit(_),
            heaplimit(_),
            jit(_),
-           jittarget(_),
            linksize(_),
            matchlimit(_),
            never_backslash_c(_),
@@ -364,6 +383,10 @@ re_test(config_all3, DocSorted = ConfigsSorted) :-
            unicode_version(_),
            version(_)
            ],
+    (   re_config(jit(true))
+    ->  Doc = [jittarget(_)|Doc0]
+    ;   Doc = Doc0
+    ),
     sort(Doc, DocSorted),
     bagof(C, re_config(C), Configs),
     assertion(ground(Configs)),
@@ -372,12 +395,12 @@ re_test(config_all3, DocSorted = ConfigsSorted) :-
     maplist(assertion_eq, DocSorted, ConfigsSorted).
 test(config_version_value2, [setup(re_config(version(V)))]) :-
     re_config(version(V)).
-re_test(config_utf8) :-
-    re_config(utf8(V)),
+re_test(config_unicode) :-
+    re_config(unicode(V)),
     must_be(boolean, V).
-re_test(config_utf8_value, [nondet]) :- % For verifying that this works: condition(re_config(utf8(true)))
-    (   re_config(utf8(true)) % TODO: shouldn't leave choicepoint
-    ;   re_config(utf8(false))
+re_test(config_unicode_value, [nondet]) :- % For verifying that this works: condition(re_config(unicode(true)))
+    (   re_config(unicode(true)) % TODO: shouldn't leave choicepoint
+    ;   re_config(unicode(false))
     ).
 re_test(config_unicode_properties) :-
     re_config(unicode_properties(V)),
@@ -385,13 +408,11 @@ re_test(config_unicode_properties) :-
 re_test(config_jit) :-
     re_config(jit(V)),
     must_be(boolean, V).
-re_test(config_jittarget) :-
-    E = error(Formal,_),
-    catch(re_config(jittarget(V)), E, true),
-    (   var(Formal)
-    ->  must_be(atom, V)
-    ;   Formal = existence_error(re_config, jittarget(V)) % no JIT support
-    ).
+re_test(config_jittarget, [condition(re_config(jit(true)))]) :-
+    re_config(jittarget(V)), % was: error(existence_error(re_config, jittarget(V)),_)
+    must_be(atom, V).
+re_test(config_jittarge2, [condition(re_config(jit(false))), fail]) :-
+    re_config(jittarget(_V)).
 re_test(config_newline, fail) :- % was: error(existence_error(re_config,newline(V)),_)
     re_config(newline(_V)). % newline in PCRE1 becomes newline2 in PCRE2
 re_test(config_newline2) :-
@@ -796,6 +817,13 @@ re_test(compare3) :-
     re_compile('a', Re1, []),
     compare(Comp1, Re1, Re1),
     assertion(Comp1 == (=)).
+
+re_test(write, Result == re_match{0:"хелло 蛇"}) :-
+    % Make sure that write_pcre() works witn non-ASCII.
+    re_compile('хелло 蛇', Re, []),
+    with_output_to(string(ReStr), write(current_output, Re)),
+    re_matchsub(Re, ReStr, Result),
+    assertion(re_match("^<regex>\\(.*\\)$", ReStr)).
 
 % TODO: test for options in patterns with write_re_options().
 %       (See comment in write_re_options() for PCRE2_ALLOPTIONS)

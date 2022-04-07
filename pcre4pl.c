@@ -47,6 +47,11 @@
 #include <assert.h>
 #include <pcre2.h>
 
+/* For testing systems that don't have JIT on systems with a JIT,
+   uncomment the following: */
+/* #define FORCE_NO_JIT 1 */
+
+
 		 /*******************************
 		 *	      RE STRUCT		*
 		 *******************************/
@@ -150,6 +155,7 @@ acquire_pcre(atom_t symbol)
 {
   #ifdef O_DEBUG
   const re_data *re = PL_blob_data(symbol, NULL, NULL);
+  /* TODO: Fix following print to work with Unicode (see write_pcre()) */
   Sdprintf("ACQUIRE_PCRE <regex>(%p, /%s/)\n", re, PL_atom_chars(re->pattern));
   #endif
 }
@@ -184,6 +190,7 @@ static int
 release_pcre(atom_t symbol)
 { re_data *re = PL_blob_data(symbol, NULL, NULL);
   #ifdef O_DEBUG
+  /* TODO: Fix following print to work with Unicode (see write_pcre()) */
   Sdprintf("RELEASE_PCRE <regex>(%p, /%s/)\n", re, PL_atom_chars(re->pattern));
   #endif
   return free_pcre(re);
@@ -725,9 +732,11 @@ typedef enum re_config_type
   CFG_BOOL,
   CFG_BOOL_BKWD,	/* Backwards compatibility with PCRE1 */
   CFG_STRINGBUF,
+  CFG_STRINGBUF_OPT,	/* STRINGBUF that might return PCRE2_ERROR_BADOPTION */
   CFG_BSR,
   CFG_NEWLINE,
   CFG_TRUE_BKWD,	/* Backwards compatibility with PCRE1 */
+  CFG_FALSE_BKWD,	/* Backwards compatibility with PCRE1 */
   CFG_INVALID
 } re_config_type;
 
@@ -747,8 +756,8 @@ static re_config_opt cfg_opts[] =
   { "compiled_widths",	      PCRE2_CONFIG_COMPILED_WIDTHS,	   CFG_INTEGER },   /* PCRE2 */
   { "depthlimit",	      PCRE2_CONFIG_DEPTHLIMIT,		   CFG_INTEGER },   /* PCRE2 */
   { "heaplimit",	      PCRE2_CONFIG_HEAPLIMIT,		   CFG_INTEGER },   /* PCRE2 */
-  { "jit",		      PCRE2_CONFIG_JIT,			   CFG_BOOL },
-  { "jittarget",	      PCRE2_CONFIG_JITTARGET,		   CFG_STRINGBUF },
+  { "jit",		      PCRE2_CONFIG_JIT,			   CFG_BOOL },      /* PCRE2 */
+  { "jittarget",	      PCRE2_CONFIG_JITTARGET,		   CFG_STRINGBUF_OPT }, /* PCRE2 */
   { "link_size",	      PCRE2_CONFIG_LINKSIZE,		   CFG_INTEGER_BKWD },
   { "linksize",		      PCRE2_CONFIG_LINKSIZE,		   CFG_INTEGER },   /* PCRE2 */ /* was LINK_SIZE */
   { "match_limit",	      PCRE2_CONFIG_MATCHLIMIT,		   CFG_INTEGER_BKWD },
@@ -779,6 +788,7 @@ next_config(intptr_t i)
       case CFG_BOOL_BKWD:
       case CFG_INTEGER_BKWD:
       case CFG_TRUE_BKWD:
+      case CFG_FALSE_BKWD:
 	break;
       default:
 	if ( !def->atom ) /* lazily fill in atoms in lookup table ... */
@@ -838,6 +848,28 @@ re_config_choice_(term_t choice, control_t handle)
 }
 
 
+#ifdef FORCE_NO_JIT
+static int
+pcre2_config_(uint32_t flag, void *result)
+{
+  if ( !result )
+    return pcre2_config(flag, result);
+
+  switch( flag )
+  { case PCRE2_CONFIG_JIT:
+      *(uint32_t *)result = 0;
+      return 0;
+    case PCRE2_CONFIG_JITTARGET:
+      return PCRE2_ERROR_BADOPTION;
+    default:
+      return pcre2_config(flag, result);
+  }
+}
+#else
+#define pcre2_config_(flag, result) pcre2_config(flag, result)
+#endif
+
+
 /** re_config(+Term)
 
     For documentation of this function, see pcre.pl
@@ -866,7 +898,7 @@ re_config_(term_t opt)
 	  } val;
 
 	  /* pcre2_config() returns 0 for int, # bytes for stringbuf, PCRE2_ERROR_BADOPTION (negative) for error */
-	  if ( pcre2_config(o->id, &val) >= 0 )
+	  if ( pcre2_config_(o->id, &val) >= 0 )
 	  { switch(o->type)
 	    { case CFG_BOOL:
 	      case CFG_BOOL_BKWD:
@@ -875,6 +907,7 @@ re_config_(term_t opt)
 	      case CFG_INTEGER_BKWD:
 		return PL_unify_integer(arg, val.i_signed);
 	      case CFG_STRINGBUF:
+	      case CFG_STRINGBUF_OPT:
 		return PL_unify_atom_chars(arg, val.s_buf);
 	      case CFG_BSR:
 		switch(val.i_unsigned)
@@ -897,7 +930,7 @@ re_config_(term_t opt)
 		    case PCRE2_NEWLINE_NUL:     c = "nul";     break;
 		    default:
 		      Sdprintf("CFG_NEWLINE: 0x%08x\n", val.i_unsigned);
-		      c = "?";
+		      c = "???";
 		      assert(0);
 		  }
 		  return PL_unify_atom_chars(arg, c);
@@ -906,6 +939,8 @@ re_config_(term_t opt)
 		return FALSE; /* was: PL_existence_error("re_config", opt); */
 	      case CFG_TRUE_BKWD:
 		return PL_unify_bool(arg, 1);
+	      case CFG_FALSE_BKWD:
+		return PL_unify_bool(arg, 0);
 	      default:
 		Sdprintf("PCRE2_CONFIG type(1): 0x%08x", o->type);
 		assert(0);
@@ -914,8 +949,10 @@ re_config_(term_t opt)
 	  { switch(o->type)
 	    { case CFG_TRUE_BKWD:
 		return PL_unify_bool(arg, 1);
+	      case CFG_FALSE_BKWD:
+		return PL_unify_bool(arg, 0);
 	      case CFG_INVALID:
-	      case CFG_STRINGBUF: /* JW: Dubious.  Returned for jittarget if there is no JIT support */
+	      case CFG_STRINGBUF_OPT:
 		return FALSE; /* was: PL_existence_error("re_config", opt); */
 	      default:
 		Sdprintf("PCRE2_CONFIG type(2): 0x%08x", o->type);
@@ -925,7 +962,7 @@ re_config_(term_t opt)
 	}
       }
 
-      return FALSE; /* waas: PL_existence_error("re_config", opt); */
+      return FALSE; /* was: PL_existence_error("re_config", opt); */
     }
     return FALSE; /* was: PL_type_error("compound", opt); */
   }
@@ -1132,7 +1169,7 @@ write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
 
   if (get_pcre2_info(s, re, PCRE2_INFO_NEWLINE, "INFO_NEWLINE", &ui) )
   { uint32_t config_ui = 0;
-    int rc_c = pcre2_config(PCRE2_CONFIG_NEWLINE, &config_ui);
+    int rc_c = pcre2_config_(PCRE2_CONFIG_NEWLINE, &config_ui);
     /* Sfprintf(s, "<newline:0x%08x/config:0x%08x>", ui, config_ui); */
     /* TODO: verify that the following works on Unix, MacOs, Windows: */
     if ( rc_c >= 0 &&
