@@ -300,6 +300,14 @@ re_test(replace_capture_type_precedence2, NewString == 'A[1]bA[2]A[3]c') :-
 re_test(replace_capture_type_precedence3, NewString == 'A[1]bA[2]A[3]c') :-
     re_replace("a(\\d)"/gas, "A[\\1]", "a1ba2a3c", NewString, [capture_type(string)]).
 
+% There are some additional Unicode tests in package/cpp/test_ffi.pl,
+% so one test for Unicode >0xffff suffices.
+re_test(unicode_ffff,
+        [condition((re_config(unicode(true)),
+                    \+ current_prolog_flag(windows, true))), % Windows doesn't like Unicode > 0xffff
+        Result == re_match{0:"ᢱᢰᢰᢰ\U0001FB00⻱",1:"ᢱ",2:"ᢰᢰᢰ",3:"\x1fb00\⻱"}]) :-
+    re_matchsub('^(.)(ᢰ*)(..)', "ᢱᢰᢰᢰ\U0001FB00⻱へび", Result).
+
 re_test(replace_unicode1,
      [condition(re_config(unicode(true))),
       true(NewString == "網目錦蛇 [reticulated python へび]")]) :-

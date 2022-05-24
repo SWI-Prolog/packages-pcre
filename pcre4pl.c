@@ -446,7 +446,7 @@ lookup_and_apply_optdef(re_optdef opt_defs[], atom_t name,
 }
 
 static int/* bool (FALSE/TRUE), as returned by PL_..._error() */
-lookup_and_apply_optdef_arg(re_optdef opt_defs[], atom_t name,
+lookup_and_apply_optdef_arg(re_optdef opt_defs[], term_t name,
 			    term_t option_term, term_t arg, uint32_t mask,
 			    re_options_flags *options_flags)
 { atom_t aval;
