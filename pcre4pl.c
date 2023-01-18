@@ -221,7 +221,9 @@ write_pcre(IOSTREAM *s, atom_t symbol, int flags)
   const re_data *re = PL_blob_data(symbol, NULL, NULL);
   /* For blob details: re_portray_() - re_portray/2 */
   PL_STRINGS_MARK();
+  WPRINT_PUSH
   Sfprintf(s, "<regex>(%p, /%Ws/)", re, PL_atom_wchars(re->pattern, NULL));
+  WPRINT_POP
   PL_STRINGS_RELEASE();
   return TRUE;
 }
@@ -1210,7 +1212,7 @@ write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
     write_option_str(s, sep, &ui, PCRE2_COPY_MATCHED_SUBJECT,       "COPY_MATCHED_SUBJECT");
 #endif
     if ( ui )
-    { Sfprintf(s, "%s<all:remainder:0x%08x>", ui);
+    { Sfprintf(s, "%s<all:remainder:0x%08x>", *sep, ui);
       *sep = " ";
     }
   }
@@ -1240,7 +1242,7 @@ re_portray_(term_t stream, term_t regex)
   if ( re.capture_size && re.capture_names )
   { int i;
     const char* sep2 = "";
-    Sfprintf(fd, "%s{", sep, re.capture_size);
+    Sfprintf(fd, "%s{%" PRId32, sep, re.capture_size);
     for(i=0; i<re.capture_size+1; i++)
     { if ( re.capture_names[i].name )
       { Sfprintf(fd, "%s%d:%s:%s", sep2, i, PL_atom_chars(re.capture_names[i].name), cap_type_str(re.capture_names[i].type));
