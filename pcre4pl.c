@@ -221,9 +221,7 @@ write_pcre(IOSTREAM *s, atom_t symbol, int flags)
   const re_data *re = PL_blob_data(symbol, NULL, NULL);
   /* For blob details: re_portray_() - re_portray/2 */
   PL_STRINGS_MARK();
-  WPRINT_PUSH
-  Sfprintf(s, "<regex>(%p, /%Ws/)", re, PL_atom_wchars(re->pattern, NULL));
-  WPRINT_POP
+  SfprintfX(s, "<regex>(%p, /%Ws/)", re, PL_atom_wchars(re->pattern, NULL));
   PL_STRINGS_RELEASE();
   return TRUE;
 }
