@@ -1239,7 +1239,7 @@ re_portray_(term_t stream, term_t regex)
     Sfprintf(fd, "%s$optimise", sep);
   if ( re.capture_size && re.capture_names )
   { int i;
-    const char* sep2 = "";
+    const char* sep2 = " ";
     Sfprintf(fd, "%s{%" PRIu32, sep, re.capture_size);
     for(i=0; i<re.capture_size+1; i++)
     { if ( re.capture_names[i].name )

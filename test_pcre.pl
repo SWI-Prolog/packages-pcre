@@ -194,7 +194,7 @@ re_test(named, Sub == re_match{0:"2017-04-20",
 	       [extended(true)]),
     re_matchsub(Re, "2017-04-20", Sub, []),
     re_portray_string(Re, RegexStr),
-    assertion(RegexStr == "<regex>(/(?<date> (?<year>(?:\\d\\d)?\\d\\d) -\n\t\t(?<month>\\d\\d) - (?<day>\\d\\d) )/ [EXTENDED BSR_UNICODE CAP_STRING] $capture=4 {0:CAP_DEFAULT 1:date:CAP_DEFAULT 2:year:CAP_DEFAULT 3:month:CAP_DEFAULT 4:day:CAP_DEFAULT})").
+    assertion(RegexStr == "<regex>(/(?<date> (?<year>(?:\\d\\d)?\\d\\d) -\n\t\t(?<month>\\d\\d) - (?<day>\\d\\d) )/ [EXTENDED BSR_UNICODE CAP_STRING] $capture=4 {4 0:CAP_DEFAULT 1:date:CAP_DEFAULT 2:year:CAP_DEFAULT 3:month:CAP_DEFAULT 4:day:CAP_DEFAULT})").
 re_test(typed1, Sub == re_match{0:"2017-04-20",
 				date:"2017-04-20",
 				day:20,month:4,year:2017}) :-
@@ -490,15 +490,15 @@ re_test(compile_portray_0a,
     re_compile(".", Regex, [newline(anycrlf)]),
     re_portray_string(Regex, RegexStr).
 re_test(compile_portray_1a,
-        RegexStr == "<regex>(/(.)/ [BSR_UNICODE CAP_STRING] $capture=1 {0:CAP_DEFAULT 1:CAP_DEFAULT})") :-
+        RegexStr == "<regex>(/(.)/ [BSR_UNICODE CAP_STRING] $capture=1 {1 0:CAP_DEFAULT 1:CAP_DEFAULT})") :-
     re_compile("(.)", Regex, []),
     re_portray_string(Regex, RegexStr).
 re_test(compile_portray_1b,
-        RegexStr == "<regex>(/(.)/ [BSR_UNICODE CAP_ATOM] $capture=1 {0:CAP_DEFAULT 1:CAP_DEFAULT})") :-
+        RegexStr == "<regex>(/(.)/ [BSR_UNICODE CAP_ATOM] $capture=1 {1 0:CAP_DEFAULT 1:CAP_DEFAULT})") :-
     re_compile("(.)", Regex, [capture_type(atom)]),
     re_portray_string(Regex, RegexStr).
 re_test(compile_portray_2,
-        RegexStr == "<regex>(/(?<foo>.)([a-z]*)(?<bar_A>.)/ [BSR_UNICODE CAP_STRING] $capture=3 {0:CAP_DEFAULT 1:foo:CAP_DEFAULT 2:CAP_DEFAULT 3:bar:CAP_ATOM})") :-
+        RegexStr == "<regex>(/(?<foo>.)([a-z]*)(?<bar_A>.)/ [BSR_UNICODE CAP_STRING] $capture=3 {3 0:CAP_DEFAULT 1:foo:CAP_DEFAULT 2:CAP_DEFAULT 3:bar:CAP_ATOM})") :-
     re_compile("(?<foo>.)([a-z]*)(?<bar_A>.)", Regex, []),
     re_portray_string(Regex, RegexStr).
 
