@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker and Peter Ludemann
     E-mail:        jan@swi-prolog.org
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2017-2022, VU University Amsterdam
+    Copyright (c)  2017-2023, VU University Amsterdam
                               SWI-Prolog Solutions b.v.
     All rights reserved.
 
@@ -73,6 +73,24 @@ compiled regular  expression, a pattern,  or a term  Pattern/Flags.  The
 semantics of the pattern can be additionally modified by options. In the
 latter two cases a regular expression  _blob_ is created and stored in a
 cache. The cache can be cleared using re_flush/0.
+
+Most of the predicates in this library   take  both a regular expression
+represented as a string  with  optional   flags,  e.g.,  `'aap'/i`  or a
+_compiled regular_ expression. If a string (+flags) alternative is used,
+the library maintains a cache of  compiled regular expressions. See also
+re_flush/0. The library can  be  asked   to  rewrite  the re_match/2 and
+re_match/3 goals to use  inlined   compiled  regular  expression objects
+using
+
+    :- set_prolog_flag(re_compile, true).
+
+This has some consequences:
+
+  - Performance is considerable better.
+  - Compiled regular expressions are currently incompatible with
+    _Quick Load Files_ (`.qlf`, see qcompile/1) and _Saved States_
+    (see qsave_program/2 and the ``-c`` command line option.
+  - Debugging may be harder.
 
 @see `man pcre2api` or https://www.pcre.org/current/doc/html/pcre2api.html
      for details of the PCRE2 syntax and options.
@@ -929,3 +947,28 @@ re_config(Term), var(Term) =>
     re_config_(Term).
 re_config(Term) =>
     re_config_(Term).
+
+		 /*******************************
+		 *            COMPILE		*
+		 *******************************/
+
+:- create_prolog_flag(re_compile, false, [keep(true)]).
+
+expand_regex(Regex, String, Options, Goal) :-
+    \+ blob(Regex, regex),
+    re_compiled(Regex, Compiled, Options),
+    Goal = (pcre:re_match_(Compiled, String, Options)).
+
+
+:- multifile
+    user:goal_expansion/2.
+
+user:goal_expansion(re_match(Regex, String), Compiled) :-
+    ground(Regex),
+    current_prolog_flag(re_compile, true),
+    expand_regex(Regex, String, [], Compiled).
+user:goal_expansion(re_match(Regex, String, Options), Compiled) :-
+    ground(Regex),
+    ground(Options),
+    current_prolog_flag(re_compile, true),
+    expand_regex(Regex, String, Options, Compiled).
