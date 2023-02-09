@@ -227,6 +227,31 @@ write_pcre(IOSTREAM *s, atom_t symbol, int flags)
 }
 
 
+static int
+save_pcre(atom_t symbol, IOSTREAM *fd)
+{ const re_data *re = PL_blob_data(symbol, NULL, NULL);
+  (void)fd;
+
+  /* TODO: implement this: be sure to serialize the various uint32_t
+           fields (in re_options_flags etc) so that they work with
+           either big- or little-endian machines; also convert the
+           various atom_t fields into a length + vector of wchar_t. */
+
+  PL_STRINGS_MARK();
+  PL_warningX("Cannot save reference to <regex>(%p, /%Ws/)", re, PL_atom_wchars(re->pattern, NULL));
+  PL_STRINGS_RELEASE();
+  return FALSE;
+}
+
+
+static atom_t
+load_pcre(IOSTREAM *fd)
+{ (void)fd;
+  assert(0); /* Should never happen */
+
+  return PL_new_atom("<saved-pcre-handle>");
+}
+
 static PL_blob_t pcre2_blob =
 { PL_BLOB_MAGIC,
   0,
@@ -235,8 +260,8 @@ static PL_blob_t pcre2_blob =
   compare_pcres,
   write_pcre,
   NULL, /* acquire */
-  NULL, /* TODO: save */
-  NULL  /* TODO: load */
+  save_pcre,
+  load_pcre
 };
 
 

@@ -590,7 +590,7 @@ parts_to_output(atom, Parts, String) :-
 %   re_compile/3).
 %
 %   This "compilation" has nothing to  do with PCRE pattern compilation;
-%   it's used by re_replace/5 to proces the With argument.
+%   it's used by re_replace/5 to process the With argument.
 
 :- table compile_replacement/2 as shared.
 
