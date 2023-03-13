@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker and Peter Ludemann
     E-mail:        jan@swi-prolog.org
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2017-2022, VU University Amsterdam
+    Copyright (c)  2017-2023, VU University Amsterdam
                               SWI-Prolog Solutions b.v.
     All rights reserved.
 
@@ -46,6 +46,8 @@
 :- use_module(library(pcre)).
 :- use_module(library(error)).
 :- use_module(library(debug), [assertion/1]).
+:- use_module(library(filesex), [copy_file/2]).
+
 
 /* Testing notes.
 
@@ -833,10 +835,36 @@ re_test(write, Result == re_match{0:"хелло 蛇"}) :-
     re_matchsub(Re, ReStr, Result),
     assertion(re_match("^<regex>\\(.*\\)$", ReStr)).
 
+re_test(save_load, S == re_match{0:"2023-03-14",
+                                 date:"2023-03-14", day:"14", month:"03", year:"2023"}) :-
+    predicate_property(test_pcre:assertion_eq(_,_), file(QcFile)),
+    directory_file_path(LocalDir, _, QcFile),
+    tmp_file_stream(TmpDir, TmpStream, []),
+    close(TmpStream),
+    delete_file(TmpDir),
+    make_directory_path(TmpDir),
+    Base = 'test_pcre_load',
+    Module = 'test_pcre_load',
+    file_name_extension(Base, '.pl', BasePl),
+    file_name_extension(Base, '.qlf', BaseQlf),
+    directory_file_path(LocalDir, BasePl, LocalPl),
+    directory_file_path(TmpDir, Base, TmpBase),
+    directory_file_path(TmpDir, BasePl, TmpPl),
+    directory_file_path(TmpDir, BaseQlf, TmpQlf),
+    copy_file(LocalPl, TmpPl),
+    qcompile(TmpBase),
+    forall(current_predicate(Module:P), abolish(Module:P)),
+    delete_file(TmpPl),
+    load_files([TmpQlf]),
+    delete_directory_and_contents(TmpDir),
+
+    test_pcre_load:match_date('2023-03-14', S).
+
 % TODO: test for options in patterns with write_re_options().
 %       (See comment in write_re_options() for PCRE2_ALLOPTIONS)
 
 :- end_tests(pcre).
+
 
 assertion_eq(A, B) :-
     assertion(A = B).

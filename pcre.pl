@@ -61,7 +61,7 @@
 
 This module provides an interface  to  the [PCRE2](http://www.pcre.org/)
 (Perl Compatible Regular Expression)  library.   This  Prolog  interface
-provides an almost comprehensive wrapper around PCRE2  (the successor to
+provides an almost complete wrapper around PCRE2  (the successor to
 PCRE)  with as much backward compatibility to PCRE as possible,  because
 the original implementation was for PCRE (also known as PCRE1).
 
@@ -106,10 +106,10 @@ This has some consequences:
                        eol(boolean),
                        empty(boolean),
                        empty_atstart(boolean),
-                       partial_soft(bool),
-                       partial_hard(bool),
-                       % dfa_restart(bool),  % TODO: if pcre2_dfa_match() is supported
-                       % dfa_shortest(bool), % TODO: if pcre2_dfa_match() is supported
+                       partial_soft(boolean),
+                       partial_hard(boolean),
+                       % dfa_restart(boolean),  % TODO: if pcre2_dfa_match() is supported
+                       % dfa_shortest(boolean), % TODO: if pcre2_dfa_match() is supported
                        jit(boolean),
                        copy_matched_subject(boolean)
                      ]).
@@ -864,7 +864,7 @@ re_flag_option_(t, capture_type(term)).
 re_flush :-
     abolish_module_tables(pcre).
 
-%!  re_config(+Term)
+%!  re_config(?Term)
 %
 %   Extract configuration information from the  pcre library. Term is of
 %   the   form    ``Name(Value)``.    Name    is   derived    from   the
