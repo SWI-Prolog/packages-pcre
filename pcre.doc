@@ -13,7 +13,7 @@
 \begin{document}
 
 \title{SWI-Prolog Regular Expression library}
-\author{Jan Wielemaker \\
+\author{Jan Wielemaker and Peter Ludemann \\
 	VU University Amsterdam \\
 	The Netherlands \\
 	E-mail: \email{J.Wielemaker@vu.nl}}
@@ -48,12 +48,12 @@ one may wish to implement in Prolog, e.g., SPARQL.
 There are roughly three options for adding regular expressions to
 Prolog. One is to simply interpret them in Prolog. Given Prolog's
 unification and backtracking facilities this is remarkable simple and
-performs quite reasonable. Still, implementing all facilities of
+performs quite reasonably. Still, implementing all facilities of
 modern regular expression engines requires significant effort.
 Alternatively, we can \jargon{compile} them into DCGs. This brings terse
 expressions to DCGs while staying in the same framework. The
 disadvantage is that regular expressions become programs that are hard
-to reclaim, making this approach less attractive for applications that
+to work with, making this approach less attractive for applications that
 potentially execute many different regular expressions. The final option
 is to wrap an existing regular expression engine. This provides access
 to a robust implementation for which we only have to document the Prolog

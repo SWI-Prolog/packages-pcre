@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker and Peter Ludemann
     E-mail:        jan@swi-prolog.org
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2017-2022, VU University Amsterdam
+    Copyright (c)  2017-2023, VU University Amsterdam
                               SWI-Prolog Solutions b.v.
     All rights reserved.
 
@@ -36,16 +36,16 @@
 :- module(test_pcre,
 	  [ test_pcre/0
 	  ]).
+:- use_module(library(apply), [maplist/3]).
 
 :- encoding(utf8).
-
-:- asserta(user:file_search_path(foreign, '.')).
-:- asserta(user:file_search_path(library, '.')).
 
 :- use_module(library(plunit)).
 :- use_module(library(pcre)).
 :- use_module(library(error)).
 :- use_module(library(debug), [assertion/1]).
+:- use_module(library(filesex), [directory_file_path/3]).
+
 
 /* Testing notes.
 
@@ -833,10 +833,37 @@ re_test(write, Result == re_match{0:"хелло 蛇"}) :-
     re_matchsub(Re, ReStr, Result),
     assertion(re_match("^<regex>\\(.*\\)$", ReStr)).
 
+re_test(save_load,
+	[ S == re_match{0:"2023-03-14",
+			date:"2023-03-14", day:"14", month:"03",
+			year:"2023"},
+	  cleanup(catch(delete_file(Qlf), _, true))
+	]) :-
+    file_path('input/pcre_load', In),
+    file_base_name(In, Base),
+    file_name_extension(Base, qlf, QlfFile),
+    current_prolog_flag(tmp_dir, Tmp),
+    directory_file_path(Tmp, QlfFile, Qlf),
+    catch(delete_file(Qlf), _, true),
+    load_files(In, ['$qlf'(Qlf)]),
+    unload_file(In),
+    assertion(\+ current_predicate(match_date/2)),
+    consult(Qlf),
+    match_date('2023-03-14', S).
+
+find_me.
+
+file_path(File, Path) :-
+    source_file(find_me, Here),
+    file_directory_name(Here, Dir),
+    directory_file_path(Dir, File, Path).
+
+
 % TODO: test for options in patterns with write_re_options().
 %       (See comment in write_re_options() for PCRE2_ALLOPTIONS)
 
 :- end_tests(pcre).
+
 
 assertion_eq(A, B) :-
     assertion(A = B).

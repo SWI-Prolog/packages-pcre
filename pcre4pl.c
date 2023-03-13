@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker and Peter Ludemann
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2017-2022, VU University Amsterdam
+    Copyright (c)  2017-2023, VU University Amsterdam
 			      SWI-Prolog Solution b.v.
     All rights reserved.
 
@@ -45,6 +45,12 @@
 #include <string.h>
 #include <assert.h>
 #include <pcre2.h>
+
+#ifdef O_DEBUG
+#define DEBUG(g) g
+#else
+#define DEBUG(g) (void)0
+#endif
 
 /* For testing systems that don't have JIT on systems with a JIT,
    uncomment the following: */
@@ -123,6 +129,28 @@ typedef struct re_data
   cap_how          *capture_names;	/* Names for captured data */
   pcre2_code_8     *pcre2_code;		/* the compiled expression */
 } re_data;
+
+
+static int re_compile_impl(re_data *re, size_t len, char *pats);
+
+static int    release_pcre(atom_t symbol);
+static int    compare_pcres(atom_t a, atom_t b);
+static int    write_pcre(IOSTREAM *s, atom_t symbol, int flags);
+static int    save_pcre(atom_t symbol, IOSTREAM *fd);
+static atom_t load_pcre(IOSTREAM *fd);
+
+static PL_blob_t pcre2_blob =
+{ .magic   = PL_BLOB_MAGIC,
+  .flags   = 0,
+  .name    = "regex",
+  .release = release_pcre,
+  .compare = compare_pcres,
+  .write   = write_pcre,
+  .acquire = NULL,
+  .save    = save_pcre,
+  .load    = load_pcre
+};
+
 
 /* The start position is PCRE2_SIZE in pcre2.h: */
 /* TODO: Our flag (which contains the size) is only 32 bits but PCRE2 allows 64 bits */
@@ -228,41 +256,94 @@ write_pcre(IOSTREAM *s, atom_t symbol, int flags)
 
 
 static int
+save_pcre_options_flag(const re_options_flags *options_flag, IOSTREAM *fd)
+{ return
+    PL_qlf_put_uint32(options_flag->seen, fd) &&
+    PL_qlf_put_uint32(options_flag->flags, fd);
+}
+
+static int
+load_pcre_options_flag(IOSTREAM *fd, re_options_flags *options_flag)
+{ return
+    PL_qlf_get_uint32(fd, &options_flag->seen) &&
+    PL_qlf_get_uint32(fd, &options_flag->flags);
+}
+
+static int
 save_pcre(atom_t symbol, IOSTREAM *fd)
 { const re_data *re = PL_blob_data(symbol, NULL, NULL);
-  (void)fd;
 
-  /* TODO: implement this: be sure to serialize the various uint32_t
-           fields (in re_options_flags etc) so that they work with
-           either big- or little-endian machines; also convert the
-           various atom_t fields into a length + vector of wchar_t. */
-
-  PL_STRINGS_MARK();
-  PL_warningX("Cannot save reference to <regex>(%p, /%Ws/)", re, PL_atom_wchars(re->pattern, NULL));
-  PL_STRINGS_RELEASE();
-  return FALSE;
+  // capture_names and pcre2_code aren't saved, but are
+  // created in load_pcre() by compiling the pattern.
+  int rc =
+    PL_qlf_put_uint32(1, fd) && // version #
+    PL_qlf_put_atom(re->pattern, fd) &&
+    save_pcre_options_flag(&re->compile_options_flags, fd) &&
+    save_pcre_options_flag(&re->capture_type, fd) &&
+    save_pcre_options_flag(&re->optimise_flags, fd) &&
+    save_pcre_options_flag(&re->jit_options_flags, fd) &&
+    save_pcre_options_flag(&re->compile_ctx_flags, fd) &&
+    save_pcre_options_flag(&re->compile_bsr_flags, fd) &&
+    save_pcre_options_flag(&re->compile_newline_flags, fd) &&
+    save_pcre_options_flag(&re->match_options_flags, fd) &&
+    save_pcre_options_flag(&re->start_flags, fd);
+  DEBUG(Sdprintf("SAVE_PCRE rc=%d\n", rc));
+  return rc;
 }
 
 
 static atom_t
 load_pcre(IOSTREAM *fd)
-{ (void)fd;
-  assert(0); /* Should never happen */
+{ uint32_t version;
+  DEBUG(Sdprintf("LOAD_PCRE start\n"));
 
-  return PL_new_atom("<saved-pcre-handle>");
+  PL_qlf_get_uint32(fd, &version);
+  if ( version != 1)
+  { PL_warning("Version mismatch for PCRE2 blob load");
+    Sseterr(fd, SIO_FERR, "Version mismatch for PCRE2 blob load");
+    return (atom_t)0;
+  }
+
+  re_data re;
+  memset(&re, 0, sizeof re);
+
+  if ( !PL_qlf_get_atom(fd, &re.pattern) )
+  { DEBUG(Sdprintf("LOAD_PCRE failed (get_atom)\n"));
+    PL_warning("Failed to load Pcre2 blob");
+    return (atom_t)0;
+  }
+  PL_register_atom(re.pattern);
+  // From here on, need to call free_pcre() for any failure to ensure
+  // re.pattern is freed.
+  if ( !load_pcre_options_flag(fd, &re.compile_options_flags) ||
+       !load_pcre_options_flag(fd, &re.capture_type) ||
+       !load_pcre_options_flag(fd, &re.optimise_flags) ||
+       !load_pcre_options_flag(fd, &re.jit_options_flags) ||
+       !load_pcre_options_flag(fd, &re.compile_ctx_flags) ||
+       !load_pcre_options_flag(fd, &re.compile_bsr_flags) ||
+       !load_pcre_options_flag(fd, &re.compile_newline_flags) ||
+       !load_pcre_options_flag(fd, &re.match_options_flags) ||
+       !load_pcre_options_flag(fd, &re.start_flags) )
+  { DEBUG(Sdprintf("LOAD_PCRE failed\n"));
+    (void)free_pcre(&re);
+    PL_warning("Failed to load Pcre2 blob");
+    return (atom_t)0;
+  }
+
+  DEBUG(Sdprintf("LOAD_PCRE done load_pcre_*()\n"));
+  size_t len;
+  char *pats;
+  atom_t result =
+    ( PL_atom_mbchars(re.pattern, &len, &pats, REP_UTF8) &&
+      re_compile_impl(&re, len, pats) )
+    ? PL_new_blob(&re, sizeof re, &pcre2_blob)
+    : (atom_t)0;
+
+  DEBUG(Sdprintf("LOAD_PCRE result=%" PRIuPTR, result));
+  if (!result)
+    (void)free_pcre(&re);
+  return result;
 }
-
-static PL_blob_t pcre2_blob =
-{ PL_BLOB_MAGIC,
-  0,
-  "regex",
-  release_pcre,
-  compare_pcres,
-  write_pcre,
-  NULL, /* acquire */
-  save_pcre,
-  load_pcre
-};
 
 
 		 /*******************************
@@ -654,8 +735,7 @@ ensure_compile_context(pcre2_compile_context **compile_ctx)
      them, nor any check that they're ignored.
 */
 static int /* bool (FALSE/TRUE), as returned by PL_..._error() */
-re_get_options(term_t options, re_data *re,
-	       pcre2_compile_context **compile_ctx) /* Can be NULL; caller must free */
+re_get_options(term_t options, re_data *re)
 { term_t tail = PL_copy_term_ref(options);
   term_t head = PL_new_term_ref();
 
@@ -754,7 +834,7 @@ typedef struct re_config_opt
   int		  id;
   re_config_type  type;
   atom_t	  atom;    /* Initially 0; filled in as-needed by re_config_() */
-  functor_t       functor; /* Initially 0; filled in as-needed by re_config_choices_() */
+  functor_t       functor; /* Initially 0; filled in as-needed by re_config_choice_() */
 } re_config_opt;
 
 /* Items with id == -1 are for backwards compatibility with PCRE1 */
@@ -893,7 +973,7 @@ re_config_(term_t opt)
     { re_config_opt *o;
       term_t arg = PL_new_term_ref();
 
-      _PL_get_arg(1, opt, arg);
+      _PL_get_arg(1, opt, arg); /* TODO: PL_ge_arg(...) */
 
       for(o=cfg_opts; o->name; o++)
       { if ( !o->atom )
@@ -963,6 +1043,7 @@ re_config_(term_t opt)
 	      case CFG_INVALID:
 	      case CFG_STRINGBUF_OPT:
 		return FALSE; /* was: PL_existence_error("re_config", opt); */
+	      case CFG_STRINGBUF: /* TODO: remove? JW: dubious. Returned for jittarget if there is not JIT support */
 	      default:
 		Sdprintf("PCRE2_CONFIG type(2): 0x%08x", o->type);
 		assert(0);
@@ -1285,52 +1366,30 @@ re_portray_(term_t stream, term_t regex)
 }
 
 
-/** re_compile(+Pattern, -Regex, +Options) is det.
-
-    For documentation of this function, see pcre.pl
-*/
-static foreign_t
-re_compile_(term_t pat, term_t reb, term_t options)
+static int
+re_compile_impl(re_data *re, size_t len, char *pats)
 { int rc; /* Every path (to label out) must set rc */
-  int must_free_blob = TRUE;
-  size_t len;
-  char *pats;
   pcre2_compile_context *compile_ctx = NULL;
   int re_error_code;
   PCRE2_SIZE re_error_offset;
-  re_data re;
-  init_re_data(&re);
 
-  if ( !re_get_options(options, &re, &compile_ctx) )
-  { rc = FALSE;
-    goto out;
-  }
-  if ( !PL_get_nchars(pat, &len, &pats, GET_NCHARS_FLAGS) )
-  { rc = FALSE;
-    goto out;
-  }
-  if ( strlen(pats) != len )		/* TBD: escape as \0xx */
-  { rc = PL_representation_error("nul_byte");
-    goto out;
-  }
-
-  if ( re.compile_bsr_flags.flags )
+  if ( re->compile_bsr_flags.flags )
   { ensure_compile_context(&compile_ctx);
-    if ( 0 != pcre2_set_bsr(compile_ctx, re.compile_bsr_flags.flags) )
+    if ( 0 != pcre2_set_bsr(compile_ctx, re->compile_bsr_flags.flags) )
     { rc = PL_representation_error("option:bsr"); /* Should never happen */
       goto out;
     }
   }
-  if ( re.compile_newline_flags.flags )
+  if ( re->compile_newline_flags.flags )
   { ensure_compile_context(&compile_ctx);
-    if ( 0 != pcre2_set_newline(compile_ctx, re.compile_newline_flags.flags) )
+    if ( 0 != pcre2_set_newline(compile_ctx, re->compile_newline_flags.flags) )
     { rc = PL_representation_error("option:newline"); /* Should never happen */
       goto out;
     }
   }
-  if ( re.compile_ctx_flags.flags )
+  if ( re->compile_ctx_flags.flags )
   { ensure_compile_context(&compile_ctx);
-    if ( 0 != pcre2_set_compile_extra_options(compile_ctx, re.compile_ctx_flags.flags) )
+    if ( 0 != pcre2_set_compile_extra_options(compile_ctx, re->compile_ctx_flags.flags) )
     { rc = PL_representation_error("option:extra"); /* Should never happen */
       goto out;
     }
@@ -1338,29 +1397,16 @@ re_compile_(term_t pat, term_t reb, term_t options)
 
   /* pats is ptr to (signed) char; PCRE2_SPTR is ptr to uint8; they're
      compatible as far as we're concerned */
-  if ( (re.pcre2_code = pcre2_compile((PCRE2_SPTR)pats, len, re.compile_options_flags.flags,
-				      &re_error_code, &re_error_offset, compile_ctx) ) )
-  { if ( re.optimise_flags.flags&RE_OPTIMISE )
-    { pcre2_jit_compile(re.pcre2_code, re.jit_options_flags.flags);
+  if ( (re->pcre2_code = pcre2_compile((PCRE2_SPTR)pats, len, re->compile_options_flags.flags,
+				       &re_error_code, &re_error_offset, compile_ctx) ) )
+  { if ( re->optimise_flags.flags&RE_OPTIMISE )
+    { pcre2_jit_compile(re->pcre2_code, re->jit_options_flags.flags);
       /* TBD: handle error that's not from no jit support, etc. */
       /* TODO: unit test to verify jit compile worked and
 	       that options were handled properly - needs changes
 	       to write_re_options() */
     }
-    if ( !init_capture_map(&re) )
-    { /* init_capture_map() has called an appropriate PL_..._error()
-	 to indicate the cause; PL_..._error() returns FALSE, so
-	 return that value. */
-      rc = FALSE;
-      goto out;
-    }
-
-    if ( (PL_get_atom(pat, &re.pattern)) )
-      PL_register_atom(re.pattern);
-    else
-      re.pattern = PL_new_atom_mbchars(REP_UTF8, len, pats);
-    must_free_blob = FALSE;
-    rc = PL_unify_blob(reb, &re, sizeof re, &pcre2_blob);
+    rc = init_capture_map(re);
     goto out;
   } else
   { PCRE2_UCHAR re_error_msg[256];
@@ -1371,9 +1417,49 @@ re_compile_(term_t pat, term_t reb, term_t options)
 
  out:
   pcre2_compile_context_free(compile_ctx);
-  if ( must_free_blob )
-    free_pcre(&re);
+  if ( !rc )
+    free_pcre(re);
   return rc;
+}
+
+
+static int
+re_verify_pats(size_t len, char *pats)
+{ if ( strlen(pats) != len )		/* TBD: escape as \0x */
+    return PL_representation_error("nul_byte");
+  return TRUE;
+}
+
+
+static int
+re_set_pat(re_data *re, term_t pat, size_t len, char *pats)
+{ if ( (PL_get_atom(pat, &re->pattern)) )
+    PL_register_atom(re->pattern);
+  else
+    re->pattern = PL_new_atom_mbchars(REP_UTF8, len, pats);
+
+  return TRUE;
+}
+
+
+/** re_compile(+Pattern, -Regex, +Options) is det.
+
+    For documentation of this function, see pcre.pl
+*/
+static foreign_t
+re_compile_(term_t pat, term_t reb, term_t options)
+{ re_data re;
+  init_re_data(&re);
+  size_t len;
+  char *pats;
+
+  return
+    re_get_options(options, &re) &&
+    PL_get_nchars(pat, &len, &pats, GET_NCHARS_FLAGS) &&
+    re_verify_pats(len, pats) &&
+    re_set_pat(&re, pat, len, pats) &&
+    re_compile_impl(&re, len, pats) &&
+    PL_unify_blob(reb, &re, sizeof re, &pcre2_blob);
 }
 
 
@@ -1393,7 +1479,7 @@ re_portray_match_options_(term_t stream, term_t options)
   if ( !PL_get_stream(stream, &fd, SIO_OUTPUT) || !PL_acquire_stream(fd) )
     return FALSE;
 
-  if ( !re_get_options(options, &re, &compile_ctx) )
+  if ( !re_get_options(options, &re) )
   { rc = FALSE;
     goto out;
   }
@@ -1557,7 +1643,7 @@ re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
     return FALSE;
   if ( !re_get_subject(on, &subject, 0) )
     return FALSE;
-  if ( !re_get_options(options, &re, NULL) )
+  if ( !re_get_options(options, &re) )
     return FALSE;
 
   /* From here on, all errors must do "rc = xxx; go to out" */
@@ -1632,7 +1718,7 @@ re_foldl_(term_t regex, term_t on,
     return FALSE;
   if ( !re_get_subject(on, &subject, BUF_STACK) ) /* Different from re_matchsub_() */
     return FALSE;
-  if ( !re_get_options(options, &re, NULL) )
+  if ( !re_get_options(options, &re) )
     return FALSE;
 
   /* From here on, all errors must do "rc = xxx; go to out" */
@@ -1694,3 +1780,4 @@ install_pcre4pl(void)
   PL_register_foreign("re_portray",   2, re_portray_,  0);
   PL_register_foreign("re_portray_match_options", 2, re_portray_match_options_, 0);
 }
+
