@@ -688,7 +688,7 @@ re_test(compile_match_1, [Sub, Sub2] == [re_match{0:"a"}, re_match{0:"b"}]) :-
     MatchOpts = [jit(false), anchored(false),bol(false),eol(false),empty(false),empty_atstart(false),start(0)], % anchored(false) overrides in re_match()
     re_portray_match_options_string(MatchOpts, MatchOptsStr),
     re_matchsub(Regex, "abc", Sub, MatchOpts),
-    assertion(MatchOptsStr == "<no pcre2_code> NOTBOL NOTEOL NOTEMPTY NOTEMPTY_ATSTART NO_JIT $start=0"),
+    assertion(MatchOptsStr == "<no re_compiled> NOTBOL NOTEOL NOTEMPTY NOTEMPTY_ATSTART NO_JIT $start=0"),
     re_portray_string(Regex, RegexStr),
     % TODO: need to check: the BSR result in the following is the
     %       default (possibly change the portray code).
@@ -697,12 +697,12 @@ re_test(compile_match_1, [Sub, Sub2] == [re_match{0:"a"}, re_match{0:"b"}]) :-
     re_matchsub(Regex, "abc", Sub2, [start(1)|MatchOpts]).
 
 re_test(compile_match_2,
-     MatchOptsStr == "<no pcre2_code> $start=999") :-
+     MatchOptsStr == "<no re_compiled> $start=999") :-
     re_portray_match_options_string([anchored(false),bol(true),eol(true),empty(true),empty_atstart(true),start(999)],
 					    MatchOptsStr).
 
 re_test(compile_match_3,
-        MatchOptionsStr == "<no pcre2_code> $start=0") :-
+        MatchOptionsStr == "<no re_compiled> $start=0") :-
     % TODO: verify that newline(...) is not a pcre2_match() option
     re_portray_match_options_string([newline(nul)], MatchOptionsStr).
 

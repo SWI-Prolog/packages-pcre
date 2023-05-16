@@ -127,7 +127,7 @@ typedef struct re_data
   re_options_flags  start_flags;        /* The start position (int) - a "match" flag */
   uint32_t          capture_size;	/* # captured subpatterns */
   cap_how          *capture_names;	/* Names for captured data */
-  pcre2_code_8     *pcre2_code;		/* the compiled expression */
+  pcre2_code_8     *re_compiled;	/* The compiled pattern */
 } re_data;
 
 
@@ -183,8 +183,8 @@ free_pcre(re_data *re)
   { PL_unregister_atom(re->pattern);
     re->pattern = 0;
   }
-  pcre2_code_free(re->pcre2_code);
-  re->pcre2_code = NULL;
+  pcre2_code_free(re->re_compiled);
+  re->re_compiled = NULL;
   if ( re->capture_names )
   { uint32_t i;
 
@@ -273,7 +273,7 @@ static int
 save_pcre(atom_t symbol, IOSTREAM *fd)
 { const re_data *re = PL_blob_data(symbol, NULL, NULL);
 
-  // capture_names and pcre2_code aren't saved, but are
+  // capture_names and re_compiled aren't saved, but are
   // created in load_pcre() by compiling the pattern.
   int rc =
     PL_qlf_put_uint32(1, fd) && // version #
@@ -830,7 +830,7 @@ typedef enum re_config_type
 
 
 typedef struct re_config_opt
-{ char		 *name;
+{ const char	 *name;
   int		  id;
   re_config_type  type;
   atom_t	  atom;    /* Initially 0; filled in as-needed by re_config_() */
@@ -1061,7 +1061,7 @@ re_config_(term_t opt)
 }
 
 static int
-set_capture_name_and_type(const char *s, re_data *re, int ci)
+set_capture_name_and_type(const char *s, re_data *re, uint32_t ci)
 { const char *fs = strrchr(s, '_');
   size_t len;
 
@@ -1099,19 +1099,18 @@ init_capture_map(re_data *re)
 { int name_count;
   int name_entry_size;
   const char *table;
-  int i;
-  if ( pcre2_pattern_info(re->pcre2_code, PCRE2_INFO_CAPTURECOUNT,  &re->capture_size)!=0 ||
-       pcre2_pattern_info(re->pcre2_code, PCRE2_INFO_NAMECOUNT,     &name_count)      !=0 ||
-       pcre2_pattern_info(re->pcre2_code, PCRE2_INFO_NAMEENTRYSIZE, &name_entry_size) !=0 ||
-       pcre2_pattern_info(re->pcre2_code, PCRE2_INFO_NAMETABLE,     &table)	      !=0 )
+  if ( pcre2_pattern_info(re->re_compiled, PCRE2_INFO_CAPTURECOUNT,  &re->capture_size)!=0 ||
+       pcre2_pattern_info(re->re_compiled, PCRE2_INFO_NAMECOUNT,     &name_count)      !=0 ||
+       pcre2_pattern_info(re->re_compiled, PCRE2_INFO_NAMEENTRYSIZE, &name_entry_size) !=0 ||
+       pcre2_pattern_info(re->re_compiled, PCRE2_INFO_NAMETABLE,     &table)	      !=0 )
     return PL_resource_error("pcre2_pattern_info");
   if ( ! (re->capture_names = malloc((re->capture_size+1) * sizeof (cap_how))) )
     return PL_resource_error("memory");
-  for(i=0; i<re->capture_size+1; i++)
+  for(uint32_t i=0; i<re->capture_size+1; i++)
   { re->capture_names[i].name = 0;
     re->capture_names[i].type = CAP_DEFAULT;
   }
-  for(i=0; i<name_count; i++, table += name_entry_size)
+  for(int i=0; i<name_count; i++, table += name_entry_size)
   { if ( !set_capture_name_and_type(&table[2], re,
 				    ((table[0]&0xff)<<8) + (table[1]&0xff)) )
       return FALSE;
@@ -1123,9 +1122,9 @@ init_capture_map(re_data *re)
 static int /* FALSE or TRUE */
 get_pcre2_info(IOSTREAM *s, const re_data *re, uint32_t info_type, const char *descr, uint32_t *result)
 { int rc;
-  if ( !re->pcre2_code )
+  if ( !re->re_compiled )
     return FALSE; /* write_re_options() has already output a message */
-  rc = pcre2_pattern_info(re->pcre2_code, info_type, result);
+  rc = pcre2_pattern_info(re->re_compiled, info_type, result);
   switch( rc )
   { case 0:
       return TRUE;
@@ -1160,8 +1159,8 @@ static void
 write_re_options(IOSTREAM *s, const char **sep, const re_data *re)
 { uint32_t ui;
 
-  if ( !re->pcre2_code_8 )
-  { Sfprintf(s, "%s<no pcre2_code>", *sep);
+  if ( !re->re_compiled )
+  { Sfprintf(s, "%s<no re_compiled>", *sep);
     *sep = " ";
   }
 
@@ -1344,10 +1343,9 @@ re_portray_(term_t stream, term_t regex)
   if ( re.optimise_flags.flags&RE_OPTIMISE )
     Sfprintf(fd, "%s$optimise", sep);
   if ( re.capture_size && re.capture_names )
-  { int i;
-    const char* sep2 = " ";
+  { const char* sep2 = " ";
     Sfprintf(fd, "%s{%" PRIu32, sep, re.capture_size);
-    for(i=0; i<re.capture_size+1; i++)
+    for(uint32_t i=0; i<re.capture_size+1; i++)
     { if ( re.capture_names[i].name )
       { Sfprintf(fd, "%s%d:%s:%s", sep2, i, PL_atom_chars(re.capture_names[i].name), cap_type_str(re.capture_names[i].type));
 	sep2 = " ";
@@ -1397,10 +1395,10 @@ re_compile_impl(re_data *re, size_t len, char *pats)
 
   /* pats is ptr to (signed) char; PCRE2_SPTR is ptr to uint8; they're
      compatible as far as we're concerned */
-  if ( (re->pcre2_code = pcre2_compile((PCRE2_SPTR)pats, len, re->compile_options_flags.flags,
-				       &re_error_code, &re_error_offset, compile_ctx) ) )
+  if ( (re->re_compiled = pcre2_compile((PCRE2_SPTR)pats, len, re->compile_options_flags.flags,
+				        &re_error_code, &re_error_offset, compile_ctx) ) )
   { if ( re->optimise_flags.flags&RE_OPTIMISE )
-    { pcre2_jit_compile(re->pcre2_code, re->jit_options_flags.flags);
+    { pcre2_jit_compile(re->re_compiled, re->jit_options_flags.flags);
       /* TBD: handle error that's not from no jit support, etc. */
       /* TODO: unit test to verify jit compile worked and
 	       that options were handled properly - needs changes
@@ -1648,7 +1646,7 @@ re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
 
   /* From here on, all errors must do "rc = xxx; go to out" */
   /* TODO: conditionally allocate match_data on the stack? (As in the PCRE1 code) */
-  match_data = pcre2_match_data_create_from_pattern(re.pcre2_code, NULL);
+  match_data = pcre2_match_data_create_from_pattern(re.re_compiled, NULL);
   /* utf8_seek() returns size_t; pcre2_match() takes int */
   /* re_get_options() ensured that the value isn't greater than INT_MAX */
   utf8_start = utf8_seek(subject.subject, subject.length, re.start_flags.flags);
@@ -1656,7 +1654,7 @@ re_matchsub_(term_t regex, term_t on, term_t result, term_t options)
   { rc = out_of_range(re.start_flags.flags);
     goto out;
   }
-  { int re_rc = pcre2_match(re.pcre2_code,
+  { int re_rc = pcre2_match(re.re_compiled,
 			    (PCRE2_SPTR)subject.subject, subject.length,
 			    utf8_start, re.match_options_flags.flags,
 			    match_data, NULL);  /* TODO: pcre2_match_context instead of NULL */
@@ -1722,7 +1720,7 @@ re_foldl_(term_t regex, term_t on,
     return FALSE;
 
   /* From here on, all errors must do "rc = xxx; go to out" */
-  match_data = pcre2_match_data_create_from_pattern(re.pcre2_code, NULL);
+  match_data = pcre2_match_data_create_from_pattern(re.re_compiled, NULL);
   /* utf8_seek() returns size_t; pcre2_match() takes int */
   /* re_get_options() ensured that the value isn't greater than INT_MAX */
   utf8_start = utf8_seek(subject.subject, subject.length, re.start_flags.flags);
@@ -1732,7 +1730,7 @@ re_foldl_(term_t regex, term_t on,
   }
 
   for(;;)
-  { int re_rc = pcre2_match(re.pcre2_code,
+  { int re_rc = pcre2_match(re.re_compiled,
 			    (PCRE2_SPTR)subject.subject, subject.length,
 			    utf8_start, re.match_options_flags.flags,
 			    match_data, NULL);  /* TODO: pcre2_match_context instead of NULL */
