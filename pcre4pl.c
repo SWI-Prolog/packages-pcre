@@ -115,7 +115,8 @@ typedef struct re_options_flags
 */
 
 typedef struct re_data
-{ atom_t            pattern;		/* pattern (as atom) */
+{ atom_t            symbol;		/* regex as blob */
+  atom_t            pattern;		/* pattern (as atom) */
   re_options_flags  compile_options_flags;
   re_options_flags  capture_type;	/* Default capture_type: cap_type */
   re_options_flags  optimise_flags;     /* Turns on JIT */
@@ -133,6 +134,7 @@ typedef struct re_data
 
 static int re_compile_impl(re_data *re, size_t len, char *pats);
 
+static void   acquire_pcre(atom_t symbol);
 static int    release_pcre(atom_t symbol);
 static int    compare_pcres(atom_t a, atom_t b);
 static int    write_pcre(IOSTREAM *s, atom_t symbol, int flags);
@@ -143,6 +145,7 @@ static PL_blob_t pcre2_blob =
 { .magic   = PL_BLOB_MAGIC,
   .flags   = 0,
   .name    = "regex",
+  .acquire = acquire_pcre,
   .release = release_pcre,
   .compare = compare_pcres,
   .write   = write_pcre,
@@ -200,6 +203,15 @@ free_pcre(re_data *re)
   }
   return TRUE;
 }
+
+
+static void
+acquire_pcre(atom_t symbol)
+{ re_data *re = PL_blob_data(symbol, NULL, NULL);
+
+  re->symbol = symbol;
+}
+
 
 static int
 release_pcre(atom_t symbol)
@@ -1103,9 +1115,9 @@ init_capture_map(re_data *re)
        pcre2_pattern_info(re->re_compiled, PCRE2_INFO_NAMECOUNT,     &name_count)      !=0 ||
        pcre2_pattern_info(re->re_compiled, PCRE2_INFO_NAMEENTRYSIZE, &name_entry_size) !=0 ||
        pcre2_pattern_info(re->re_compiled, PCRE2_INFO_NAMETABLE,     &table)	      !=0 )
-    return PL_resource_error("pcre2_pattern_info");
+    return PL_resource_error("pcre2_pattern_info"); // TODO: add re->symbol
   if ( ! (re->capture_names = malloc((re->capture_size+1) * sizeof (cap_how))) )
-    return PL_resource_error("memory");
+    return PL_resource_error("memory"); // TODO: add re->symbol
   for(uint32_t i=0; i<re->capture_size+1; i++)
   { re->capture_names[i].name = 0;
     re->capture_names[i].type = CAP_DEFAULT;
@@ -1374,21 +1386,21 @@ re_compile_impl(re_data *re, size_t len, char *pats)
   if ( re->compile_bsr_flags.flags )
   { ensure_compile_context(&compile_ctx);
     if ( 0 != pcre2_set_bsr(compile_ctx, re->compile_bsr_flags.flags) )
-    { rc = PL_representation_error("option:bsr"); /* Should never happen */
+      { rc = PL_representation_error("option:bsr"); /* TODO: add re->symbol) */
       goto out;
     }
   }
   if ( re->compile_newline_flags.flags )
   { ensure_compile_context(&compile_ctx);
     if ( 0 != pcre2_set_newline(compile_ctx, re->compile_newline_flags.flags) )
-    { rc = PL_representation_error("option:newline"); /* Should never happen */
+    { rc = PL_representation_error("option:newline"); /* TODO: add re->symbol) */
       goto out;
     }
   }
   if ( re->compile_ctx_flags.flags )
   { ensure_compile_context(&compile_ctx);
     if ( 0 != pcre2_set_compile_extra_options(compile_ctx, re->compile_ctx_flags.flags) )
-    { rc = PL_representation_error("option:extra"); /* Should never happen */
+    { rc = PL_representation_error("option:extra"); /* TODO: add re->symbol) */
       goto out;
     }
   }
@@ -1424,7 +1436,7 @@ re_compile_impl(re_data *re, size_t len, char *pats)
 static int
 re_verify_pats(size_t len, char *pats)
 { if ( strlen(pats) != len )		/* TBD: escape as \0x */
-    return PL_representation_error("nul_byte");
+    return PL_representation_error("nul_byte"); /* TODO: add re->symbol */
   return TRUE;
 }
 
