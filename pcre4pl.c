@@ -226,6 +226,7 @@ static functor_t FUNCTOR_pair2;		/* -/2 */
 		 *	  SYMBOL WRAPPER	*
 		 *******************************/
 
+#define CMP_FIELD(fld) if (rea->fld.flags < reb->fld.flags) return -1; if (rea->fld.flags > reb->fld.flags) return 1
 
 static int
 compare_pcres(atom_t a, atom_t b)
@@ -245,14 +246,28 @@ compare_pcres(atom_t a, atom_t b)
     PL_STRINGS_RELEASE();
   }
 
-  if ( comparison )
-    return comparison;
+  if ( comparison )  return comparison;
 
-  /* Same pattern, so use address (which is stable) to break tie: */
+  CMP_FIELD(compile_options_flags);
+  CMP_FIELD(capture_type);
+  CMP_FIELD(optimise_flags);
+  CMP_FIELD(jit_options_flags);
+  CMP_FIELD(compile_ctx_flags);
+  CMP_FIELD(compile_bsr_flags);
+  CMP_FIELD(compile_newline_flags);
+  CMP_FIELD(match_options_flags);
+  CMP_FIELD(start_flags);
+
+  /* No need to compare capture_names because they because they are
+     derived from the patterns */
+
+  /* Equal so far, so use address (which is stable) to break tie: */
   return ( (rea > reb) ?  1 :
 	   (rea < reb) ? -1 : 0
 	 );
 }
+
+#undef CMP_FIELD
 
 
 static int
