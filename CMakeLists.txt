@@ -19,6 +19,11 @@ if(PCRE_FOUND)
   install_dll(${PCRE_LIBRARIES})
 
   test_libs(pcre)
+  if(INSTALL_TESTS)
+    install(DIRECTORY input
+	    DESTINATION ${INSTALL_TESTS_DIR}/packages/pcre
+	    COMPONENT Tests)
+  endif()
 
   pkg_doc(pcre
 	SECTION
