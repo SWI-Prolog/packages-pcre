@@ -247,11 +247,12 @@ static int
 write_pcre(IOSTREAM *s, atom_t symbol, int flags)
 { (void)flags; /* unused arg */
   const re_data *re = PL_blob_data(symbol, NULL, NULL);
+  int rc;
   /* For blob details: re_portray_() - re_portray/2 */
   PL_STRINGS_MARK();
-  SfprintfX(s, "<regex>(%p, /%Ws/)", re, PL_atom_wchars(re->pattern, NULL));
+  rc = SfprintfX(s, "<regex>(%p, /%Ws/)", re, PL_atom_wchars(re->pattern, NULL));
   PL_STRINGS_RELEASE();
-  return TRUE;
+  return rc > 0;
 }
 
 
