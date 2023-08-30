@@ -799,7 +799,7 @@ re_get_options(term_t options, re_data *re)
 	  /* TODO: allow 64-bit sizes */
 	  if ( !(re->start_flags.seen) )
 	  { re->start_flags.seen = 1;
-	    re->start_flags.flags = start_value;
+	    re->start_flags.flags = (uint32_t)start_value;
 	  }
 	}
       } /* else: ignore unknown option */
@@ -1517,7 +1517,7 @@ put_capname(term_t t, const re_data *re, int i)
 static int  /* bool (FALSE/TRUE), as returned by PL_get_...() etc */
 put_capval(term_t t, const re_data *re, re_subject *subject, int i, const PCRE2_SIZE ovector[])
 { const char *s = &subject->subject[ovector[i*2]];
-  int len = ovector[i*2+1]-ovector[i*2];
+  size_t len = ovector[i*2+1]-ovector[i*2];
   cap_type ctype = re->capture_type.flags;
 
   if ( re->capture_names && re->capture_names[i].type != CAP_DEFAULT )
@@ -1538,8 +1538,8 @@ put_capval(term_t t, const re_data *re, re_subject *subject, int i, const PCRE2_
       size_t start = bytep_to_charp(subject, ovector[i*2]);
       size_t end   = bytep_to_charp(subject, ovector[i*2+1]);
       int rc = ( (av=PL_new_term_refs(2)) &&
-		  PL_put_integer(av+0, start) &&
-		  PL_put_integer(av+1, end-start) &&
+		  PL_put_int64(av+0, start) &&
+		  PL_put_int64(av+1, end-start) &&
 		  PL_cons_functor_v(t, FUNCTOR_pair2, av) );
       if ( av )
 	PL_reset_term_refs(av);
