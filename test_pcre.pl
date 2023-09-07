@@ -71,20 +71,11 @@ test_pcre :-
     run_tests([ pcre
 	      ]).
 
-% TODO: make this part of plunit?
-%       see https://swi-prolog.discourse.group/t/plunit-and-individual-test-setup-cleanup/4853
-:- dynamic seen_re_test/1.
-:- retractall(seen_re_test(_)).
-
 term_expansion((re_test(Name) :- Body),
                   (test(Name, Options2) :- Body)) :-
-    ( seen_re_test(Name) -> throw(error(dup_re_test(Name), _)) ; true ),
-    assertz(seen_re_test(Name)),
     expand_re_test_options([], Options2).
 term_expansion((re_test(Name, Options) :- Body),
                   (test(Name, Options2) :- Body)) :-
-    ( seen_re_test(Name) -> throw(error(dup_re_test(Name), _)) ; true ),
-    assertz(seen_re_test(Name)),
     expand_re_test_options(Options, Options2).
 :- det(expand_re_test_options/2).
 expand_re_test_options([], Options2) =>
