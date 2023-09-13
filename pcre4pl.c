@@ -149,7 +149,6 @@ static PL_blob_t pcre2_blob =
   .release = release_pcre,
   .compare = compare_pcres,
   .write   = write_pcre,
-  .acquire = NULL,
   .save    = save_pcre,
   .load    = load_pcre
 };
