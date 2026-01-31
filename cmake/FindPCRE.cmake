@@ -25,7 +25,16 @@ find_path(PCRE_INCLUDE_DIR NAMES pcre2.h)
 # Look for the library
 # - sets PCRE_LIBRARY (e.g.: /usr/lib/x86_64-linux-gnu/libpcre2-8.so),
 #        PCRE_INCLUDE_DIR (e.g., /usr/include)
-find_library(PCRE_LIBRARY NAMES pcre2-8)
+# On Windows with vcpkg, handle separate debug/release libraries (pcre2-8d vs pcre2-8)
+if(WIN32)
+	find_library(PCRE_LIBRARY_RELEASE NAMES pcre2-8)
+	find_library(PCRE_LIBRARY_DEBUG NAMES pcre2-8d pcre2-8)
+
+	include(SelectLibraryConfigurations)
+	select_library_configurations(PCRE)
+else()
+	find_library(PCRE_LIBRARY NAMES pcre2-8)
+endif()
 
 # Handle the QUIETLY and REQUIRED arguments and set PCRE_FOUND to TRUE if all listed variables are TRUE.
 include(FindPackageHandleStandardArgs)
