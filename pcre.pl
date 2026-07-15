@@ -509,7 +509,7 @@ regex_capture_type_flag_chars(Flags, Chars, Options) :-
     % different result is desired, it is specified in the flags. The
     % following code converts an Options capture_type to a flag
     % character and appends it to the Flags.
-    (   memberchk(capture_type(T), Options),
+    (   option(capture_type(T), Options),
         type_flag(TFlag, T)
     ->  % No need to do delete(Options,capture_type(_),Options2)
         % because Flags take precedence and first occurence in Options
