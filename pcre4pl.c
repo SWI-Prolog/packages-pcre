@@ -274,11 +274,25 @@ static int
 write_pcre(IOSTREAM *s, atom_t symbol, int flags)
 { (void)flags; /* unused arg */
   const re_data *re = PL_blob_data(symbol, NULL, NULL);
+  fid_t fid;
+  term_t t;
+  int rc;
+
   /* For blob details: re_portray_() - re_portray/2 */
-  PL_STRINGS_MARK();
-  SfprintfX(s, "<regex>(%p, /%Ws/)", re, PL_atom_wchars(re->pattern, NULL));
-  PL_STRINGS_RELEASE();
-  return TRUE;
+  /* The pattern is written as a quoted atom rather than /pattern/ so
+     that the whole blob is acceptable to read_term/2,3 using blob(dead).
+     A pattern containing ')' or a quote made the old form unparsable.
+  */
+  if ( Sfprintf(s, "<regex>(%p, ", re) < 0 )
+    return FALSE;
+  if ( !(fid=PL_open_foreign_frame()) )
+    return FALSE;
+  rc = ( (t=PL_new_term_ref()) &&
+	 PL_put_atom(t, re->pattern) &&
+	 PL_write_term(s, t, 1200, PL_WRT_QUOTED) );
+  PL_close_foreign_frame(fid);
+
+  return rc && Sfprintf(s, ")") >= 0;
 }
 
 
