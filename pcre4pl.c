@@ -274,8 +274,8 @@ static int
 write_pcre(IOSTREAM *s, atom_t symbol, int flags)
 { (void)flags; /* unused arg */
   const re_data *re = PL_blob_data(symbol, NULL, NULL);
-  fid_t fid;
-  term_t t;
+  const wchar_t *pattern;
+  size_t len;
   int rc;
 
   /* For blob details: re_portray_() - re_portray/2 */
@@ -283,16 +283,12 @@ write_pcre(IOSTREAM *s, atom_t symbol, int flags)
      that the whole blob is acceptable to read_term/2,3 using blob(dead).
      A pattern containing ')' or a quote made the old form unparsable.
   */
-  if ( Sfprintf(s, "<regex>(%p, ", re) < 0 )
-    return FALSE;
-  if ( !(fid=PL_open_foreign_frame()) )
-    return FALSE;
-  rc = ( (t=PL_new_term_ref()) &&
-	 PL_put_atom(t, re->pattern) &&
-	 PL_write_term(s, t, 1200, PL_WRT_QUOTED) );
-  PL_close_foreign_frame(fid);
+  PL_STRINGS_MARK();
+  rc = ( (pattern=PL_atom_wchars(re->pattern, &len)) &&
+	 SfprintfX(s, "<regex>(%p, %.*WAs)", re, (int)len, pattern) >= 0 );
+  PL_STRINGS_RELEASE();
 
-  return rc && Sfprintf(s, ")") >= 0;
+  return rc;
 }
 
 
