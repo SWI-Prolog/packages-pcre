@@ -1802,7 +1802,8 @@ re_foldl_(term_t regex, term_t on,
 
 install_t
 install_pcre4pl(void)
-{ FUNCTOR_pair2 = PL_new_functor(PL_new_atom("-"), 2);
+{ PL_register_blob_type(&pcre2_blob);
+  FUNCTOR_pair2 = PL_new_functor(PL_new_atom("-"), 2);
 
   PL_register_foreign("re_config_",   1, re_config_,   0);
   PL_register_foreign("re_compile",   3, re_compile_,  0);
